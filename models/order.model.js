@@ -8,6 +8,7 @@ const orderSchema = new mongoose.Schema({
   paymentStatus: { type: String, enum: ["pending", "paid", "failed"], default: "pending" },
   transactionId: { type: String, required: true, unique: true, sparse: true, },
   paymentNumber: { type: Number, },
+  paymentSlip: { type: String, default: "" }, // URL to the uploaded payment slip image
 
 }, { timestamps: true });
 

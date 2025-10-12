@@ -4,6 +4,7 @@ import User from '../models/user.model.js';
 import Lesson from "../models/lesson.model.js";
 import Course from "../models/course.model.js";
 import Enrollment from "../models/enrollment.model.js";
+import Progress from "../models/progress.model.js";
 import asyncHandler from "express-async-handler";
 
 // --- Helper function to update the total duration of a course ---
@@ -11,6 +12,42 @@ const updateCourseTotalDuration = async (courseId) => {
   const lessons = await Lesson.find({ course: courseId });
   const totalDuration = lessons.reduce((acc, lesson) => acc + (lesson.duration || 0), 0);
   await Course.findByIdAndUpdate(courseId, { totalDuration });
+};
+
+// --- Helper function to recalculate progress for all enrolled students ---
+const recalculateProgressForAllStudents = async (courseId) => {
+  try {
+    // Get all enrollments for this course
+    const enrollments = await Enrollment.find({ course: courseId });
+    
+    // Count total lessons for this course
+    const totalLessons = await Lesson.countDocuments({ course: courseId });
+    
+    if (totalLessons === 0) return; // No lessons, no progress to calculate
+    
+    // Update progress for each enrollment
+    for (const enrollment of enrollments) {
+      // Get the student's progress
+      const progress = await Progress.findOne({ 
+        student: enrollment.student, 
+        course: courseId 
+      });
+      
+      if (progress) {
+        const completedLessonsCount = progress.completedLessons.length;
+        const newProgressPercentage = Math.round((completedLessonsCount / totalLessons) * 100);
+        
+        // Update enrollment progress
+        enrollment.progress = newProgressPercentage;
+        enrollment.completed = newProgressPercentage === 100;
+        await enrollment.save();
+      }
+    }
+    
+    console.log(`Progress recalculated for ${enrollments.length} students in course ${courseId}`);
+  } catch (error) {
+    console.error('Error recalculating progress:', error);
+  }
 };
 
 /**
@@ -61,6 +98,9 @@ export const createLesson = asyncHandler(async (req, res) => {
   // 7. (Optional but good practice) Add lesson's ID to the course's lessons array
   course.lessons.push(lesson._id);
   await course.save();
+  
+  // 8. Recalculate progress for all enrolled students
+  await recalculateProgressForAllStudents(courseId);
 
   res.status(201).json({
     success: true,
@@ -233,6 +273,9 @@ export const deleteLesson = asyncHandler(async (req, res) => {
   // Update the course's lessons array and total duration
   await Course.findByIdAndUpdate(courseId, { $pull: { lessons: lesson._id } });
   await updateCourseTotalDuration(courseId);
+  
+  // Recalculate progress for all enrolled students
+  await recalculateProgressForAllStudents(courseId);
 
   res.status(200).json({ success: true, message: 'Lesson removed successfully' });
 });

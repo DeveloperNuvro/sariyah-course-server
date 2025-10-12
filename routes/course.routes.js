@@ -56,7 +56,7 @@ router.route('/:courseId/enrollments')
     .get(protect, authorize('instructor', 'admin'), getCourseEnrollments);
 
 router.route('/:id/publish')
-    .patch(protect, authorize('instructor', 'admin'), togglePublishStatus);
+    .patch(protect, authorize('admin'), togglePublishStatus);
 
 router.route('/:id/end')
     .patch(protect, authorize('instructor', 'admin'), toggleEndedStatus);

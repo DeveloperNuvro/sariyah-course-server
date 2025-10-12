@@ -6,6 +6,7 @@ import {
   getReviewsForCourse,
   updateReview,
   deleteReview,
+  canReviewCourse,
 } from "../controllers/review.controller.js";
 import { protect, authorize } from "../middleware/auth.middleware.js";
 
@@ -16,6 +17,9 @@ const courseReviewRouter = express.Router({ mergeParams: true });
 courseReviewRouter.route("/")
   .get(getReviewsForCourse)
   .post(protect, authorize("student"), createReview);
+
+courseReviewRouter.route("/can-review")
+  .get(protect, authorize("student"), canReviewCourse);
 
 // --- Top-Level Routes (Specific to a Review) ---
 reviewRouter.use(protect);

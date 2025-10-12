@@ -3,6 +3,7 @@
 import User from "../models/user.model.js"; // Adjust the path to your user model
 import asyncHandler from "express-async-handler";
 import jwt from "jsonwebtoken";
+import { v2 as cloudinary } from 'cloudinary';
 
 // --- Helper Function to Generate Tokens and Set Cookie ---
 const generateTokensAndSetCookie = async (userId, res) => {
@@ -193,6 +194,10 @@ export const getUserProfile = asyncHandler(async (req, res) => {
  * @access  Private
  */
 export const updateUserProfile = asyncHandler(async (req, res) => {
+    console.log('Update profile request received');
+    console.log('Request body:', req.body);
+    console.log('Request file:', req.file);
+    
     const user = await User.findById(req.user._id);
 
     if (!user) {
@@ -202,6 +207,7 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
 
     // Update text fields
     user.name = req.body.name || user.name;
+    user.email = req.body.email || user.email;
     user.bio = req.body.bio || user.bio;
     
     // Update nested socialLinks object
@@ -215,20 +221,71 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
 
     // Update avatar if a new file is uploaded
     if (req.file) {
+        console.log('File received:', req.file); // Debug log
+        
         // If user already has an avatar, delete the old one from Cloudinary
         if(user.avatar) {
             const publicId = user.avatar.split('/').pop().split('.')[0];
             await cloudinary.uploader.destroy(`lms/avatars/${publicId}`);
         }
-        user.avatar = req.file.path; // The secure URL from Cloudinary
+        
+        // Cloudinary returns the URL in different properties depending on the version
+        // Try different possible properties
+        const avatarUrl = req.file.secure_url || req.file.url || req.file.path;
+        console.log('Avatar URL to save:', avatarUrl); // Debug log
+        
+        user.avatar = avatarUrl;
     }
 
     const updatedUser = await user.save();
+    console.log('User saved with avatar:', updatedUser.avatar);
 
     res.status(200).json({
         success: true,
         message: "Profile updated successfully",
         user: updatedUser,
+    });
+});
+
+/**
+ * @desc    Change user password
+ * @route   PUT /api/users/change-password
+ * @access  Private
+ */
+export const changePassword = asyncHandler(async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+        res.status(400);
+        throw new Error("Please provide current password and new password");
+    }
+
+    if (newPassword.length < 6) {
+        res.status(400);
+        throw new Error("New password must be at least 6 characters long");
+    }
+
+    const user = await User.findById(req.user._id).select("+password");
+
+    if (!user) {
+        res.status(404);
+        throw new Error("User not found");
+    }
+
+    // Check if current password is correct
+    const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+    if (!isCurrentPasswordValid) {
+        res.status(400);
+        throw new Error("Current password is incorrect");
+    }
+
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({
+        success: true,
+        message: "Password changed successfully"
     });
 });
 

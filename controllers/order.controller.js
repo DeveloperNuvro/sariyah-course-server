@@ -4,6 +4,7 @@ import Order from "../models/order.model.js";
 import Course from "../models/course.model.js";
 import Enrollment from "../models/enrollment.model.js";
 import asyncHandler from "express-async-handler";
+import { v2 as cloudinary } from 'cloudinary';
 
 export const createOrder = asyncHandler(async (req, res) => {
   // We don't require payment details for free courses, so they can be optional
@@ -71,6 +72,13 @@ export const createOrder = asyncHandler(async (req, res) => {
 
   const amount = course.discountPrice > 0 ? course.discountPrice : course.price;
 
+  // Handle payment slip upload
+  let paymentSlipUrl = "";
+  if (req.file) {
+    // Cloudinary returns the URL in different properties depending on the version
+    paymentSlipUrl = req.file.secure_url || req.file.url || req.file.path;
+  }
+
   const order = await Order.create({
     user: userId,
     course: courseId,
@@ -78,6 +86,7 @@ export const createOrder = asyncHandler(async (req, res) => {
     paymentMethod,
     paymentNumber,
     transactionId,
+    paymentSlip: paymentSlipUrl,
     paymentStatus: "pending",
   });
 
@@ -96,7 +105,20 @@ export const createOrder = asyncHandler(async (req, res) => {
  */
 export const getMyOrders = asyncHandler(async (req, res) => {
   const orders = await Order.find({ user: req.user._id })
-    .populate("course", "title slug thumbnail")
+    .populate({
+      path: "course",
+      select: "title slug thumbnail price discountPrice instructor category",
+      populate: [
+        {
+          path: "instructor",
+          select: "name avatar"
+        },
+        {
+          path: "category",
+          select: "name"
+        }
+      ]
+    })
     .sort({ createdAt: -1 });
 
   res.status(200).json({
@@ -114,8 +136,21 @@ export const getMyOrders = asyncHandler(async (req, res) => {
  */
 export const getOrderById = asyncHandler(async (req, res) => {
     const order = await Order.findById(req.params.id)
-      .populate("user", "name email")
-      .populate("course", "title slug");
+      .populate("user", "name email avatar")
+      .populate({
+        path: "course",
+        select: "title slug thumbnail price discountPrice instructor category",
+        populate: [
+          {
+            path: "instructor",
+            select: "name avatar"
+          },
+          {
+            path: "category",
+            select: "name"
+          }
+        ]
+      });
 
     if (!order) {
         res.status(404);
@@ -153,7 +188,7 @@ export const getAllOrders = asyncHandler(async (req, res) => {
  * @access  Private/Admin
  */
 export const updateOrderStatus = asyncHandler(async (req, res) => {
-    const { paymentStatus, transactionId } = req.body;
+    const { paymentStatus, transactionId, paymentNumber } = req.body;
 
     if (!paymentStatus || !['pending', 'paid', 'failed'].includes(paymentStatus)) {
         res.status(400);
@@ -176,6 +211,9 @@ export const updateOrderStatus = asyncHandler(async (req, res) => {
     if (transactionId) {
         order.transactionId = transactionId;
     }
+    if (paymentNumber) {
+        order.paymentNumber = paymentNumber;
+    }
 
     // === CRITICAL LOGIC: Create enrollment if payment is successful ===
     if (paymentStatus === 'paid') {
@@ -195,5 +233,113 @@ export const updateOrderStatus = asyncHandler(async (req, res) => {
         success: true,
         message: `Order status updated to '${paymentStatus}'`,
         data: updatedOrder
+    });
+});
+
+/**
+ * @desc    Update order details (Admin only)
+ * @route   PUT /api/orders/:id
+ * @access  Private/Admin
+ */
+export const updateOrder = asyncHandler(async (req, res) => {
+    const { paymentMethod, paymentNumber, transactionId, amount, paymentStatus } = req.body;
+    
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+        res.status(404);
+        throw new Error("Order not found");
+    }
+
+    // Store the previous payment status to check if it changed to 'paid'
+    const previousStatus = order.paymentStatus;
+
+    // Update fields if provided
+    if (paymentMethod) order.paymentMethod = paymentMethod;
+    if (paymentNumber) order.paymentNumber = paymentNumber;
+    if (transactionId) order.transactionId = transactionId;
+    if (amount !== undefined) order.amount = amount;
+    if (paymentStatus) order.paymentStatus = paymentStatus;
+
+    // === CRITICAL LOGIC: Create enrollment if payment status changed to 'paid' ===
+    if (paymentStatus === 'paid' && previousStatus !== 'paid') {
+        // Ensure enrollment doesn't already exist before creating
+        const isEnrolled = await Enrollment.findOne({ student: order.user, course: order.course });
+        if (!isEnrolled) {
+            await Enrollment.create({
+                student: order.user,
+                course: order.course
+            });
+        }
+    }
+
+    const updatedOrder = await order.save();
+
+    res.status(200).json({
+        success: true,
+        message: "Order updated successfully",
+        data: updatedOrder
+    });
+});
+
+/**
+ * @desc    Update payment slip for an order
+ * @route   PUT /api/orders/:id/payment-slip
+ * @access  Private
+ */
+export const updatePaymentSlip = asyncHandler(async (req, res) => {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+        res.status(404);
+        throw new Error("Order not found");
+    }
+
+    // Authorization: User must be the order owner
+    if (order.user.toString() !== req.user._id.toString()) {
+        res.status(403);
+        throw new Error("Not authorized to update this order");
+    }
+
+    // Update payment slip if a new file is uploaded
+    if (req.file) {
+        // If order already has a payment slip, delete the old one from Cloudinary
+        if (order.paymentSlip) {
+            const publicId = order.paymentSlip.split('/').pop().split('.')[0];
+            await cloudinary.uploader.destroy(`lms/payment-slips/${publicId}`);
+        }
+        
+        // Cloudinary returns the URL in different properties depending on the version
+        const paymentSlipUrl = req.file.secure_url || req.file.url || req.file.path;
+        order.paymentSlip = paymentSlipUrl;
+    }
+
+    const updatedOrder = await order.save();
+
+    res.status(200).json({
+        success: true,
+        message: "Payment slip updated successfully",
+        data: updatedOrder,
+    });
+});
+
+/**
+ * @desc    Delete order (Admin only)
+ * @route   DELETE /api/orders/:id
+ * @access  Private/Admin
+ */
+export const deleteOrder = asyncHandler(async (req, res) => {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+        res.status(404);
+        throw new Error("Order not found");
+    }
+
+    await order.deleteOne();
+
+    res.status(200).json({
+        success: true,
+        message: "Order deleted successfully"
     });
 });

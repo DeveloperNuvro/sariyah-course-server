@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 const courseSchema = new mongoose.Schema({
   title: { type: String, required: true },
   slug: { type: String, required: true, unique: true },
+  shortDescription: { type: String },
   description: { type: String, required: true },
   thumbnail: { type: String },
   category: { type: mongoose.Schema.Types.ObjectId, ref: "Category" },
@@ -13,6 +14,8 @@ const courseSchema = new mongoose.Schema({
   lessons: [{ type: mongoose.Schema.Types.ObjectId, ref: "Lesson" }],
   totalDuration: { type: Number, default: 0 }, // in minutes
   language: { type: String, default: "English" },
+  objectives: { type: String },
+  prerequisites: { type: String },
   isPublished: { type: Boolean, default: false },
   isEnded: { type: Boolean, default: false },
 }, { timestamps: true });

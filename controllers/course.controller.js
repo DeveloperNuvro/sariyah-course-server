@@ -3,9 +3,11 @@ import Category from '../models/category.model.js';
 import Lesson from '../models/lesson.model.js';
 import Review from "../models/review.model.js";
 import Enrollment from "../models/enrollment.model.js";
+import User from "../models/user.model.js";
 import asyncHandler from "express-async-handler";
 import jwt from "jsonwebtoken"; // Needed for the optional auth check
 import slugify from 'slugify';
+import { v2 as cloudinary } from 'cloudinary';
 
 
 // @desc    Get all published courses
@@ -13,7 +15,7 @@ export const getAllCourses = asyncHandler(async (req, res) => {
     // 1. Fetch all published courses and populate necessary fields
     const courses = await Course.find({ isPublished: true })
         .populate('category', 'name')
-        .populate('instructor', 'name')
+        .populate('instructor', 'name avatar')
         .populate('lessons', 'title') // Populate lessons to get the lesson count
         .lean(); // Use .lean() for better performance and ability to add properties
 
@@ -40,7 +42,7 @@ export const getAllCoursesAdmin = asyncHandler(async (req, res) => {
     // This query is simple: get everything.
     const courses = await Course.find({})
         .populate('category', 'name')
-        .populate('instructor', 'name')
+        .populate('instructor', 'name avatar')
         .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -121,7 +123,7 @@ export const getCourseBySlug = asyncHandler(async (req, res) => {
 
 export const getCourseById = asyncHandler(async (req, res) => {
     const course = await Course.findById(req.params.id)
-        .populate("instructor", "name")
+        .populate("instructor", "name avatar")
         .populate("category", "name");
 
     if (!course) {
@@ -269,7 +271,17 @@ export const updateCourse = asyncHandler(async (req, res) => {
         req.body.thumbnail = req.file.path; // Set new URL
     }
 
-    const updatedCourse = await Course.findByIdAndUpdate(req.params.id, req.body, {
+    // Filter out empty strings and undefined values to prevent ObjectId casting errors
+    const updateData = {};
+    Object.keys(req.body).forEach(key => {
+        const value = req.body[key];
+        // Only include non-empty strings and valid values
+        if (value !== '' && value !== null && value !== undefined) {
+            updateData[key] = value;
+        }
+    });
+
+    const updatedCourse = await Course.findByIdAndUpdate(req.params.id, updateData, {
         new: true,
         runValidators: true,
     });
@@ -328,9 +340,9 @@ export const addLessonToCourse = async (req, res) => {
 };
 
 /**
- * @desc    Toggle the publish status of a course
+ * @desc    Toggle the publish status of a course (ADMIN ONLY)
  * @route   PATCH /api/courses/:id/publish
- * @access  Private/Instructor or Private/Admin
+ * @access  Private/Admin
  */
 export const togglePublishStatus = asyncHandler(async (req, res) => {
     // 1. Find the course by ID
@@ -341,10 +353,10 @@ export const togglePublishStatus = asyncHandler(async (req, res) => {
         throw new Error("Course not found");
     }
 
-    // 2. Authorization Check: Ensure the user is the course instructor or an admin
-    if (course.instructor.toString() !== req.user.id && req.user.role !== "admin") {
+    // 2. Authorization Check: Only admins can publish/unpublish courses
+    if (req.user.role !== "admin") {
         res.status(403); // Forbidden
-        throw new Error("User not authorized to change the status of this course");
+        throw new Error("Only administrators can publish or unpublish courses");
     }
 
     // 3. Toggle the 'isPublished' status

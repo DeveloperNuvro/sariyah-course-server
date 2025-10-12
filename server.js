@@ -23,6 +23,7 @@ import progressRoutes from './routes/progress.routes.js';
 import { reviewRouter } from './routes/review.routes.js';
 import certificateRouter from './routes/certificate.route.js';
 import quizScoreRoutes from './routes/quizScore.routes.js';
+import adminRoutes from './routes/admin.routes.js';
 
 // Note: You should also have your Cloudinary config being initialized by one of these imports
 // and a database connection file.
@@ -30,7 +31,7 @@ import quizScoreRoutes from './routes/quizScore.routes.js';
 const app = express();
 
 const corsOptions = {
-  origin: 'http://localhost:5173', // Your frontend URL
+  origin: 'https://www.sariyahtech.com', // Your frontend URL
   credentials: true,
 };
 
@@ -55,7 +56,8 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/progress', progressRoutes);
 app.use('/api/reviews', reviewRouter);
 app.use('/api/certificates', certificateRouter);
-app.use('/api/quiz-scores', quizScoreRoutes); // <-- ADD NEW ROUTES
+app.use('/api/quiz-scores', quizScoreRoutes);
+app.use('/api/admin', adminRoutes); // <-- ADD ADMIN ROUTES
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8900;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

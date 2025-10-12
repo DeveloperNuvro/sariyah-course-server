@@ -8,6 +8,7 @@ import {
   getRefreshToken,
   getUserProfile,
   updateUserProfile,
+  changePassword,
   getAllUsers,
   getUserById,
   deleteUser,
@@ -30,7 +31,8 @@ router.use(protect);
 router.post("/logout", logoutUser);
 router.route("/profile")
       .get(getUserProfile)
-      .put(uploadAvatar, updateUserProfile); 
+      .put(uploadAvatar, updateUserProfile);
+router.put("/change-password", changePassword); 
 
 // --- Admin Only Routes ---
 // These routes require the user to be an admin

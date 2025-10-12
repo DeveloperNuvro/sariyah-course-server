@@ -7,6 +7,7 @@ import {
   updateQuiz,
   deleteQuiz,
   submitQuiz,
+  getQuizResult,
 } from "../controllers/quiz.controller.js";
 import { protect, authorize } from "../middleware/auth.middleware.js"; // Adjust path as needed
 
@@ -26,5 +27,9 @@ router.route("/")
 // Route for a student to submit their answers
 router.route("/submit")
   .post(authorize("student"), submitQuiz);
+
+// Route for a student to get their existing quiz result
+router.route("/result")
+  .get(authorize("student"), getQuizResult);
 
 export default router;

@@ -218,7 +218,8 @@ export const submitQuiz = asyncHandler(async (req, res) => {
         course: lesson.course,
         lesson: lessonId,
         score: percentage,
-        // results: results, // Uncomment if you add the 'results' field to your schema
+        studentAnswers: answers, // Store the student's original answers
+        results: results, // Store the detailed results
     });
     // --- END OF NEW BLOCK ---
 
@@ -231,6 +232,55 @@ export const submitQuiz = asyncHandler(async (req, res) => {
             totalQuestions,
             percentage,
             results,
+        }
+    });
+});
+
+/**
+ * @desc    Get existing quiz result for a student
+ * @route   GET /api/lessons/:lessonId/quiz/result
+ * @access  Private/Student
+ */
+export const getQuizResult = asyncHandler(async (req, res) => {
+    const { lessonId } = req.params;
+    const studentId = req.user.id;
+
+    const lesson = await Lesson.findById(lessonId).select('course');
+    if (!lesson) {
+        res.status(404);
+        throw new Error("Lesson not found.");
+    }
+
+    // 1. Authorization: Must be an enrolled student
+    const isEnrolled = await Enrollment.findOne({ student: studentId, course: lesson.course });
+    if (!isEnrolled) {
+        res.status(403);
+        throw new Error("You must be enrolled in the course to view quiz results.");
+    }
+
+    // 2. Check if student has already submitted the quiz
+    const existingSubmission = await QuizScore.findOne({ student: studentId, lesson: lessonId });
+    if (!existingSubmission) {
+        res.status(404);
+        throw new Error("No quiz submission found for this lesson.");
+    }
+
+    // 3. Get the quiz to reconstruct the results
+    const quiz = await Quiz.findOne({ lesson: lessonId });
+    if (!quiz) {
+        res.status(404);
+        throw new Error("Quiz not found for this lesson.");
+    }
+
+    // 4. Return the stored results
+    res.status(200).json({
+        success: true,
+        data: {
+            score: existingSubmission.score,
+            totalQuestions: quiz.questions.length,
+            percentage: existingSubmission.score,
+            results: existingSubmission.results,
+            submittedAt: existingSubmission.createdAt
         }
     });
 });

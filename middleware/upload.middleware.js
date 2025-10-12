@@ -23,5 +23,16 @@ const thumbnailStorage = new CloudinaryStorage({
   },
 });
 
+// Configure storage for payment slips
+const paymentSlipStorage = new CloudinaryStorage({
+  cloudinary: cloudinary, // Use the imported, pre-configured instance
+  params: {
+    folder: "lms/payment-slips",
+    allowed_formats: ["jpg", "png", "jpeg"],
+    transformation: [{ width: 800, height: 600, crop: "limit" }],
+  },
+});
+
 export const uploadAvatar = multer({ storage: avatarStorage }).single("avatar");
 export const uploadThumbnail = multer({ storage: thumbnailStorage }).single("thumbnail");
+export const uploadPaymentSlip = multer({ storage: paymentSlipStorage }).single("paymentSlip");
