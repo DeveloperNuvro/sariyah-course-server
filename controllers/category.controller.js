@@ -14,29 +14,57 @@ export const createCategory = asyncHandler(async (req, res) => {
   const { name } = req.body;
 
   // 1. Validation
-  if (!name) {
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
     res.status(400);
-    throw new Error("Category name is required");
+    throw new Error("Category name is required and must be a non-empty string");
   }
 
-  // 2. Generate slug
-  const slug = slugify(name, { lower: true, strict: true });
+  // 2. Generate slug with better error handling
+  let slug;
+  try {
+    slug = slugify(name.trim(), { 
+      lower: true, 
+      strict: true,
+      remove: /[*+~.()'"!:@]/g // Remove special characters that might cause issues
+    });
+    
+    // Ensure slug is not empty after processing
+    if (!slug || slug.length === 0) {
+      slug = slugify(name.trim(), { lower: true, replacement: '-' });
+    }
+  } catch (error) {
+    console.error('Error generating slug:', error);
+    res.status(500);
+    throw new Error("Error processing category name");
+  }
 
   // 3. Check for existing category with the same name or slug
-  const categoryExists = await Category.findOne({ $or: [{ name }, { slug }] });
+  const categoryExists = await Category.findOne({ $or: [{ name: name.trim() }, { slug }] });
   if (categoryExists) {
     res.status(409); // Conflict
     throw new Error("A category with this name or slug already exists");
   }
 
   // 4. Create and save the new category
-  const category = await Category.create({ name, slug });
+  try {
+    const category = await Category.create({ 
+      name: name.trim(), 
+      slug 
+    });
 
-  res.status(201).json({
-    success: true,
-    message: "Category created successfully",
-    data: category,
-  });
+    res.status(201).json({
+      success: true,
+      message: "Category created successfully",
+      data: category,
+    });
+  } catch (error) {
+    console.error('Error creating category:', error);
+    if (error.name === 'ValidationError') {
+      res.status(400);
+      throw new Error(`Validation error: ${error.message}`);
+    }
+    throw error;
+  }
 });
 
 /**
@@ -92,8 +120,33 @@ export const updateCategory = asyncHandler(async (req, res) => {
   // 2. Prepare updates
   const updates = {};
   if (name) {
-    updates.name = name;
-    updates.slug = slugify(name, { lower: true, strict: true });
+    // Validate name
+    if (typeof name !== 'string' || name.trim().length === 0) {
+      res.status(400);
+      throw new Error("Category name must be a non-empty string");
+    }
+
+    updates.name = name.trim();
+    
+    // Generate slug with better error handling
+    try {
+      let slug = slugify(name.trim(), { 
+        lower: true, 
+        strict: true,
+        remove: /[*+~.()'"!:@]/g
+      });
+      
+      // Ensure slug is not empty after processing
+      if (!slug || slug.length === 0) {
+        slug = slugify(name.trim(), { lower: true, replacement: '-' });
+      }
+      
+      updates.slug = slug;
+    } catch (error) {
+      console.error('Error generating slug:', error);
+      res.status(500);
+      throw new Error("Error processing category name");
+    }
 
     // 3. Check for conflict with another category
     const existingCategory = await Category.findOne({

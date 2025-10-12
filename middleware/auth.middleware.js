@@ -16,6 +16,12 @@ const protect = asyncHandler(async (req, res, next) => {
       // Get token from header (format: "Bearer <token>")
       token = req.headers.authorization.split(" ")[1];
 
+      // Check if token exists after splitting
+      if (!token) {
+        res.status(401);
+        throw new Error("Not authorized, no token provided");
+      }
+
       // Verify the token
       const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
 
@@ -30,15 +36,22 @@ const protect = asyncHandler(async (req, res, next) => {
 
       next();
     } catch (error) {
-      console.error(error);
-      res.status(401);
-      throw new Error("Not authorized, token failed");
+      console.error('Auth middleware error:', error);
+      
+      if (error.name === 'JsonWebTokenError') {
+        res.status(401);
+        throw new Error("Not authorized, invalid token");
+      } else if (error.name === 'TokenExpiredError') {
+        res.status(401);
+        throw new Error("Not authorized, token expired");
+      } else {
+        res.status(401);
+        throw new Error("Not authorized, token verification failed");
+      }
     }
-  }
-
-  if (!token) {
+  } else {
     res.status(401);
-    throw new Error("Not authorized, no token");
+    throw new Error("Not authorized, no token provided");
   }
 });
 

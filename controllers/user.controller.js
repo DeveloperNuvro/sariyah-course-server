@@ -150,9 +150,14 @@ export const getRefreshToken = asyncHandler(async (req, res) => {
     const user = await User.findById(decoded.id);
 
     // 3. Check if user exists and the token matches the one in DB
-    if (!user || user.refreshToken !== refreshToken) {
+    if (!user) {
       res.status(401);
-      throw new Error("Not authorized, token is invalid or expired");
+      throw new Error("Not authorized, user not found");
+    }
+
+    if (user.refreshToken !== refreshToken) {
+      res.status(401);
+      throw new Error("Not authorized, refresh token mismatch");
     }
 
     // 4. User is valid, issue a new access token
@@ -166,8 +171,18 @@ export const getRefreshToken = asyncHandler(async (req, res) => {
     });
 
   } catch (error) {
-    res.status(401);
-    throw new Error("Not authorized, refresh token failed");
+    console.error('Refresh token error:', error);
+    
+    if (error.name === 'JsonWebTokenError') {
+      res.status(401);
+      throw new Error("Not authorized, invalid refresh token");
+    } else if (error.name === 'TokenExpiredError') {
+      res.status(401);
+      throw new Error("Not authorized, refresh token expired");
+    } else {
+      res.status(401);
+      throw new Error("Not authorized, refresh token verification failed");
+    }
   }
 });
 
