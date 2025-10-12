@@ -19,7 +19,6 @@ const userSchema = new mongoose.Schema({
     youtube: String,
   },
   refreshToken: { type: String, select: false },
-  accessToken: { type: String, select: false },
   status: { type: String, enum: ["active", "inactive"], default: "active" },
 }, { timestamps: true });
 

@@ -25,13 +25,13 @@ import certificateRouter from './routes/certificate.route.js';
 import quizScoreRoutes from './routes/quizScore.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 
-// Note: You should also have your Cloudinary config being initialized by one of these imports
-// and a database connection file.
+// Import Cloudinary configuration
+import './config/cloudinary.js';
 
 const app = express();
 
 const corsOptions = {
-  origin: 'https://www.sariyahtech.com', // Your frontend URL
+  origin: ['https://www.sariyahtech.com', 'http://localhost:5173'], // Production and development URLs
   credentials: true,
 };
 
@@ -93,7 +93,7 @@ app.use((err, req, res, next) => {
 });
 
 // --- 404 Handler ---
-app.use('*', (req, res) => {
+app.use((req, res) => {
   res.status(404).json({
     success: false,
     error: 'Route not found'

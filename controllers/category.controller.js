@@ -11,7 +11,7 @@ import slugify from "slugify";
  * @access  Private/Admin
  */
 export const createCategory = asyncHandler(async (req, res) => {
-  const { name } = req.body;
+  const { name, description } = req.body;
 
   // 1. Validation
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -49,7 +49,8 @@ export const createCategory = asyncHandler(async (req, res) => {
   try {
     const category = await Category.create({ 
       name: name.trim(), 
-      slug 
+      slug,
+      description: description?.trim() || undefined
     });
 
     res.status(201).json({
@@ -107,7 +108,7 @@ export const getCategoryBySlug = asyncHandler(async (req, res) => {
  * @access  Private/Admin
  */
 export const updateCategory = asyncHandler(async (req, res) => {
-  const { name } = req.body;
+  const { name, description } = req.body;
   const categoryId = req.params.id;
 
   // 1. Find the category to be updated
@@ -158,6 +159,10 @@ export const updateCategory = asyncHandler(async (req, res) => {
       res.status(409);
       throw new Error("Another category with this name or slug already exists");
     }
+  }
+
+  if (description !== undefined) {
+    updates.description = description?.trim() || undefined;
   }
 
   // 4. Perform the update

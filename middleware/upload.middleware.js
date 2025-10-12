@@ -20,6 +20,7 @@ const thumbnailStorage = new CloudinaryStorage({
   params: {
     folder: "lms/thumbnails",
     allowed_formats: ["jpg", "png", "jpeg"],
+    transformation: [{ width: 1000, height: 1000, crop: "fill" }],
   },
 });
 
