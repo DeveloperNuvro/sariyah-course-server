@@ -10,7 +10,8 @@ import {
     getCourseById,
     togglePublishStatus,
     toggleEndedStatus,
-    getAllCoursesAdmin
+    getAllCoursesAdmin,
+    getCourseGroupLink
 } from '../controllers/course.controller.js';
 import { protect, authorize } from '../middleware/auth.middleware.js';
 import { uploadThumbnail } from '../middleware/upload.middleware.js';
@@ -50,6 +51,9 @@ router.route('/')
 router.route('/:id')
     .put(protect, authorize('instructor', 'admin'), uploadThumbnail, updateCourse)
     .delete(protect, authorize('instructor', 'admin'), deleteCourse);
+
+// PROTECTED: Get group link if enrolled/instructor/admin
+router.get('/:id/group-link', protect, getCourseGroupLink);
 
 // PROTECTED/ADMIN: Get enrollments for a specific course.
 router.route('/:courseId/enrollments')

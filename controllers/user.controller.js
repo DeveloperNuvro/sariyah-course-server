@@ -39,7 +39,7 @@ const generateTokensAndSetCookie = async (userId, res) => {
  * @access  Public
  */
 export const registerUser = asyncHandler(async (req, res) => {
-  const { name, email, password, role } = req.body; // Allow role selection on register if desired
+  const { name, email, password, role, phone } = req.body; // Allow role selection on register if desired
 
   // 1. Validation
   if (!name || !email || !password) {
@@ -54,7 +54,7 @@ export const registerUser = asyncHandler(async (req, res) => {
   }
 
   // 2. Create user (avatar can be added later in profile update)
-  const user = await User.create({ name, email, password, role });
+  const user = await User.create({ name, email, password, role, phone: typeof phone === 'string' ? phone.trim() : '' });
 
   if (user) {
     const { accessToken } = await generateTokensAndSetCookie(user._id, res);
@@ -63,7 +63,7 @@ export const registerUser = asyncHandler(async (req, res) => {
       success: true,
       message: "User registered successfully",
       accessToken,
-      user: { _id: user._id, name: user.name, email: user.email, role: user.role },
+      user: { _id: user._id, name: user.name, email: user.email, role: user.role, phone: user.phone },
     });
   } else {
     res.status(500);
@@ -340,7 +340,7 @@ export const updateUserStatus = asyncHandler(async (req, res) => {
  * @access  Private/Admin
  */
 export const getAllUsers = asyncHandler(async (req, res) => {
-  const users = await User.find({});
+  const users = await User.find({}).sort({ createdAt: -1 });
   res.status(200).json({ success: true, count: users.length, users });
 });
 

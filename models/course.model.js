@@ -16,6 +16,7 @@ const courseSchema = new mongoose.Schema({
   language: { type: String, default: "English" },
   objectives: { type: String },
   prerequisites: { type: String },
+  groupLink: { type: String, default: "" },
   isPublished: { type: Boolean, default: false },
   isEnded: { type: Boolean, default: false },
 }, { timestamps: true });

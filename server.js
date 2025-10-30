@@ -24,6 +24,9 @@ import { reviewRouter } from './routes/review.routes.js';
 import certificateRouter from './routes/certificate.route.js';
 import quizScoreRoutes from './routes/quizScore.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import productRoutes from './routes/product.routes.js';
+import cartRoutes from './routes/cart.routes.js';
+import digitalOrderRoutes from './routes/digitalOrder.routes.js';
 
 // Import Cloudinary configuration
 import './config/cloudinary.js';
@@ -31,7 +34,7 @@ import './config/cloudinary.js';
 const app = express();
 
 const corsOptions = {
-  origin: ['https://www.sariyahtech.com', 'http://localhost:5173'], // Production and development URLs
+  origin: ['https://www.sariyahtech.com'], // Production and development URLs
   credentials: true,
 };
 
@@ -41,10 +44,48 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Database Connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB Connected...'))
-  .catch(err => console.error('MongoDB Connection Error:', err)); // Added better logging
+// Database Connection (supports in-memory for local testing)
+async function connectDb() {
+  try {
+    // Always use real MongoDB; do not auto-switch to memory DB
+    const uri = process.env.MONGO_URI || 'mongodb://localhost:27017/sariyah';
+    await mongoose.connect(uri);
+    const dbName = mongoose.connection.name;
+    console.log(`MongoDB Connected... uri=${uri} db=${dbName}`);
+
+    // Ensure product indexes are correct (drop any text index that includes 'tags')
+    try {
+      const collection = mongoose.connection.collection('products');
+      const indexes = await collection.indexes();
+      for (const idx of indexes) {
+        const keys = idx.key || {};
+        const isTextIndex = Object.values(keys).some((v) => v === 'text');
+        if (isTextIndex) {
+          const keyNames = Object.keys(keys);
+          const isExactlyTitleDescText =
+            keyNames.length === 2 &&
+            keys.title === 'text' &&
+            keys.description === 'text';
+          if (!isExactlyTitleDescText) {
+            try {
+              await collection.dropIndex(idx.name);
+              console.log(`Dropped unexpected text index: ${idx.name}`);
+            } catch {}
+          }
+        }
+      }
+      // Ensure desired text index exists only on title and description
+      await collection.createIndex({ title: 'text', description: 'text' });
+      // Ensure tags has a normal (non-text) index
+      await collection.createIndex({ tags: 1 });
+    } catch (e) {
+      console.warn('Index ensure warning:', e?.message || e);
+    }
+  } catch (err) {
+    console.error('MongoDB Connection Error:', err);
+  }
+}
+connectDb();
 
 // --- API Routes ---
 app.use('/api/users', authRoutes);
@@ -58,6 +99,28 @@ app.use('/api/reviews', reviewRouter);
 app.use('/api/certificates', certificateRouter);
 app.use('/api/quiz-scores', quizScoreRoutes);
 app.use('/api/admin', adminRoutes); // <-- ADD ADMIN ROUTES
+app.use('/api/products', productRoutes);
+app.use('/api/cart', cartRoutes);
+app.use('/api/dorders', digitalOrderRoutes);
+
+// Simple health endpoint to verify DB and counts
+app.get('/api/health', async (req, res) => {
+  try {
+    const db = mongoose.connection;
+    const state = db.readyState; // 1 connected
+    const dbName = db.name;
+    let courseCount = null;
+    try {
+      const Course = (await import('./models/course.model.js')).default;
+      courseCount = await Course.countDocuments({});
+    } catch {
+      // ignore if model not available
+    }
+    res.json({ ok: true, memoryDb: false, mongoState: state, dbName, courseCount });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // --- Global Error Handler ---
 app.use((err, req, res, next) => {

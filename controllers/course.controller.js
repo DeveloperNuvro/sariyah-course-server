@@ -198,7 +198,7 @@ export const getMyCourses = asyncHandler(async (req, res) => {
 
 // @desc    Create a new course (Admin/Instructor)
 export const createCourse = asyncHandler(async (req, res) => {
-    const { title, description, price, category, level, language, discountPrice } = req.body;
+    const { title, description, price, category, level, language, discountPrice, groupLink } = req.body;
 
     // 1. Validation
     if (!title || !description || !price || !category) {
@@ -223,6 +223,9 @@ export const createCourse = asyncHandler(async (req, res) => {
         instructor: req.user._id,
         thumbnail: req.file.path, // Secure URL from Cloudinary
     };
+    if (groupLink && typeof groupLink === 'string') {
+        courseData.groupLink = groupLink.trim();
+    }
 
     // 4. Generate unique slug
     const baseSlug = slugify(title, { lower: true, strict: true });
@@ -280,6 +283,9 @@ export const updateCourse = asyncHandler(async (req, res) => {
             updateData[key] = value;
         }
     });
+    if (typeof updateData.groupLink === 'string') {
+        updateData.groupLink = updateData.groupLink.trim();
+    }
 
     const updatedCourse = await Course.findByIdAndUpdate(req.params.id, updateData, {
         new: true,
@@ -402,4 +408,26 @@ export const toggleEndedStatus = asyncHandler(async (req, res) => {
         message: `Course has been marked as ${updatedCourse.isEnded ? 'Ended' : 'Re-opened'}.`,
         data: updatedCourse,
     });
+});
+
+// @desc    Get group link for a course if user is enrolled, instructor, or admin
+// @route   GET /api/courses/:id/group-link
+// @access  Private
+export const getCourseGroupLink = asyncHandler(async (req, res) => {
+    const course = await Course.findById(req.params.id).select('groupLink instructor');
+    if (!course) {
+        res.status(404);
+        throw new Error('Course not found');
+    }
+    // Admin or instructor can view
+    if (req.user.role === 'admin' || course.instructor.toString() === req.user.id) {
+        return res.json({ success: true, data: { groupLink: course.groupLink || '' } });
+    }
+    // Students: must be enrolled
+    const isEnrolled = await Enrollment.exists({ course: course._id, student: req.user._id });
+    if (!isEnrolled) {
+        res.status(403);
+        throw new Error('Not authorized to view group link');
+    }
+    res.json({ success: true, data: { groupLink: course.groupLink || '' } });
 });
