@@ -46,7 +46,7 @@ import {
 const app = express();
 
 const corsOptions = {
-  origin: ['https://www.sariyahtech.com', 'http://localhost:5173'], // Production and development URLs
+  origin: ['https://www.sariyahtech.com'], // Production and development URLs
   credentials: true,
 };
 

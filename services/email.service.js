@@ -4,12 +4,12 @@ import crypto from 'crypto';
 // Create reusable transporter
 const createTransporter = () => {
   return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.hostinger.com',
+    host: process.env.SMTP_HOST || 'cihcihdhcdich',
     port: parseInt(process.env.SMTP_PORT || '465'),
     secure: true, // true for 465, false for other ports
     auth: {
-      user: process.env.SMTP_USER || 'info@sariyahtech.com',
-      pass: process.env.SMTP_PASS || '2008065439@Imran',
+      user: process.env.SMTP_USER || 'eofheofhe',
+      pass: process.env.SMTP_PASS || '1234566',
     },
     tls: {
       rejectUnauthorized: false // Only use in development if needed
