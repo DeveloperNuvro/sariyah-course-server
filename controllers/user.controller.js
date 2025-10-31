@@ -4,6 +4,8 @@ import User from "../models/user.model.js"; // Adjust the path to your user mode
 import asyncHandler from "express-async-handler";
 import jwt from "jsonwebtoken";
 import { v2 as cloudinary } from 'cloudinary';
+import { generateVerificationToken, sendVerificationEmail } from '../services/email.service.js';
+import crypto from 'crypto';
 
 // --- Helper Function to Generate Tokens and Set Cookie ---
 const generateTokensAndSetCookie = async (userId, res) => {
@@ -39,31 +41,108 @@ const generateTokensAndSetCookie = async (userId, res) => {
  * @access  Public
  */
 export const registerUser = asyncHandler(async (req, res) => {
-  const { name, email, password, role, phone } = req.body; // Allow role selection on register if desired
+  // Import validation utilities
+  const { 
+    sanitizeString, 
+    sanitizeEmail, 
+    sanitizePhone,
+    validateEmail, 
+    validatePassword, 
+    validateRequired,
+    validateLength 
+  } = await import('../utils/validation.js');
 
-  // 1. Validation
-  if (!name || !email || !password) {
+  // 1. Sanitize and validate inputs
+  const name = sanitizeString(req.body.name || '', 100);
+  const email = sanitizeEmail(req.body.email || '');
+  const password = req.body.password || '';
+  const phone = sanitizePhone(req.body.phone || '');
+
+  // 2. Required fields validation
+  const requiredValidation = validateRequired(['name', 'email', 'password'], { name, email, password });
+  if (!requiredValidation.valid) {
     res.status(400);
-    throw new Error("Please provide name, email, and password");
+    throw new Error(requiredValidation.message);
   }
 
+  // 3. Name validation
+  if (!validateLength(name, 2, 100)) {
+    res.status(400);
+    throw new Error("Name must be between 2 and 100 characters");
+  }
+
+  // 4. Email validation
+  if (!validateEmail(email)) {
+    res.status(400);
+    throw new Error("Please provide a valid email address");
+  }
+
+  // 5. Password validation
+  const passwordValidation = validatePassword(password);
+  if (!passwordValidation.valid) {
+    res.status(400);
+    throw new Error(passwordValidation.message);
+  }
+
+  // 6. Phone validation (optional but validate if provided)
+  if (phone && phone.length > 0 && !/^[\d+\-() ]{7,20}$/.test(phone)) {
+    res.status(400);
+    throw new Error("Please provide a valid phone number");
+  }
+
+  // 7. Check if user already exists
   const userExists = await User.findOne({ email });
   if (userExists) {
     res.status(409);
     throw new Error("User with this email already exists");
   }
 
-  // 2. Create user (avatar can be added later in profile update)
-  const user = await User.create({ name, email, password, role, phone: typeof phone === 'string' ? phone.trim() : '' });
+  // 8. Generate verification token
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+  const verificationExpires = new Date();
+  verificationExpires.setHours(verificationExpires.getHours() + 24); // 24 hours expiry
+
+  // 9. Create user with email verification fields
+  // Force role to 'student' for regular registration (security fix)
+  const userRole = req.body.instructorRegistration ? 'instructor' : 'student';
+  
+  const user = await User.create({ 
+    name, 
+    email, 
+    password, 
+    role: userRole,
+    phone: phone || '',
+    emailVerified: false,
+    emailVerificationToken: verificationToken,
+    emailVerificationExpires: verificationExpires,
+  });
 
   if (user) {
-    const { accessToken } = await generateTokensAndSetCookie(user._id, res);
+    // 7. Send verification email
+    try {
+      await sendVerificationEmail({
+        email: user.email,
+        name: user.name,
+        token: verificationToken,
+      });
+    } catch (emailError) {
+      // If email fails, delete the user and return error
+      await User.findByIdAndDelete(user._id);
+      console.error('Email sending failed:', emailError);
+      res.status(500);
+      throw new Error("Failed to send verification email. Please try again later.");
+    }
 
+    // 10. Log registration event
+    const { logAuthEvent } = await import('../utils/securityLogger.js');
+    logAuthEvent('register', user._id, true, req);
+
+    // 11. Return success response (don't log user in yet)
     res.status(201).json({
       success: true,
-      message: "User registered successfully",
-      accessToken,
-      user: { _id: user._id, name: user.name, email: user.email, role: user.role, phone: user.phone },
+      message: "Registration successful! Please check your email to verify your account.",
+      email: user.email,
+      // Don't send token or user data - they need to verify first
     });
   } else {
     res.status(500);
@@ -77,20 +156,47 @@ export const registerUser = asyncHandler(async (req, res) => {
  * @access  Public
  */
 export const loginUser = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
+  // Import validation utilities
+  const { sanitizeEmail, validateEmail, validateRequired } = await import('../utils/validation.js');
 
-  // 1. Validation
-  if (!email || !password) {
+  // 1. Sanitize inputs
+  const email = sanitizeEmail(req.body.email || '');
+  const password = req.body.password || '';
+
+  // 2. Validation
+  const requiredValidation = validateRequired(['email', 'password'], { email, password });
+  if (!requiredValidation.valid) {
     res.status(400);
-    throw new Error("Please provide email and password");
+    throw new Error(requiredValidation.message);
   }
+
+  if (!validateEmail(email)) {
+    res.status(400);
+    throw new Error("Please provide a valid email address");
+  }
+
+  // Import security logger
+  const { logAuthEvent } = await import('../utils/securityLogger.js');
 
   // 2. Check for user and include password in the query result
   const user = await User.findOne({ email }).select("+password");
 
   // 3. Check if user exists and password is correct
   if (user && (await user.comparePassword(password))) {
-    // 4. Generate tokens and set cookie
+    logAuthEvent('login', user._id, true, req);
+    // 4. Check if email is verified
+    if (!user.emailVerified && user.role !== 'admin') {
+      res.status(403); // Forbidden
+      throw new Error("Please verify your email address before logging in. Check your inbox for the verification link.");
+    }
+
+    // 5. Check if user account is active
+    if (user.status === 'inactive') {
+      res.status(403);
+      throw new Error("Your account has been deactivated. Please contact support.");
+    }
+
+    // 6. Generate tokens and set cookie
     const { accessToken } = await generateTokensAndSetCookie(user._id, res);
 
     res.status(200).json({
@@ -105,6 +211,7 @@ export const loginUser = asyncHandler(async (req, res) => {
       },
     });
   } else {
+    logAuthEvent('login', user?._id || null, false, req);
     res.status(401); // Unauthorized
     throw new Error("Invalid email or password");
   }
@@ -209,9 +316,15 @@ export const getUserProfile = asyncHandler(async (req, res) => {
  * @access  Private
  */
 export const updateUserProfile = asyncHandler(async (req, res) => {
-    console.log('Update profile request received');
-    console.log('Request body:', req.body);
-    console.log('Request file:', req.file);
+    // Import validation utilities
+    const {
+        sanitizeString,
+        sanitizeEmail,
+        sanitizeText,
+        validateEmail,
+        validateLength,
+        validateRequired,
+    } = await import('../utils/validation.js');
     
     const user = await User.findById(req.user._id);
 
@@ -220,10 +333,41 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
         throw new Error("User not found");
     }
 
+    // Sanitize and validate inputs
+    const name = req.body.name ? sanitizeString(req.body.name, 100) : user.name;
+    const email = req.body.email ? sanitizeEmail(req.body.email) : user.email;
+    const bio = req.body.bio ? sanitizeText(req.body.bio, 500) : user.bio;
+
+    // Validate name if provided
+    if (req.body.name && !validateLength(name, 2, 100)) {
+        res.status(400);
+        throw new Error("Name must be between 2 and 100 characters");
+    }
+
+    // Validate email if provided
+    if (req.body.email) {
+        if (!validateEmail(email)) {
+            res.status(400);
+            throw new Error("Please provide a valid email address");
+        }
+        // Check if email is already taken by another user
+        const emailExists = await User.findOne({ email, _id: { $ne: user._id } });
+        if (emailExists) {
+            res.status(409);
+            throw new Error("Email is already in use");
+        }
+    }
+
+    // Validate bio length if provided
+    if (req.body.bio && !validateLength(bio, 0, 500)) {
+        res.status(400);
+        throw new Error("Bio must be less than 500 characters");
+    }
+
     // Update text fields
-    user.name = req.body.name || user.name;
-    user.email = req.body.email || user.email;
-    user.bio = req.body.bio || user.bio;
+    user.name = name;
+    user.email = email;
+    user.bio = bio;
     
     // Update nested socialLinks object
     if(req.body.socialLinks) {
@@ -236,8 +380,6 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
 
     // Update avatar if a new file is uploaded
     if (req.file) {
-        console.log('File received:', req.file); // Debug log
-        
         // If user already has an avatar, delete the old one from Cloudinary
         if(user.avatar) {
             const publicId = user.avatar.split('/').pop().split('.')[0];
@@ -247,13 +389,11 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
         // Cloudinary returns the URL in different properties depending on the version
         // Try different possible properties
         const avatarUrl = req.file.secure_url || req.file.url || req.file.path;
-        console.log('Avatar URL to save:', avatarUrl); // Debug log
         
         user.avatar = avatarUrl;
     }
 
     const updatedUser = await user.save();
-    console.log('User saved with avatar:', updatedUser.avatar);
 
     res.status(200).json({
         success: true,
@@ -268,16 +408,25 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
  * @access  Private
  */
 export const changePassword = asyncHandler(async (req, res) => {
+    // Import validation utilities
+    const { validatePassword, validateRequired } = await import('../utils/validation.js');
+
     const { currentPassword, newPassword } = req.body;
 
-    if (!currentPassword || !newPassword) {
+    // Validation
+    const requiredValidation = validateRequired(['currentPassword', 'newPassword'], {
+        currentPassword,
+        newPassword,
+    });
+    if (!requiredValidation.valid) {
         res.status(400);
-        throw new Error("Please provide current password and new password");
+        throw new Error(requiredValidation.message);
     }
 
-    if (newPassword.length < 6) {
+    const passwordValidation = validatePassword(newPassword);
+    if (!passwordValidation.valid) {
         res.status(400);
-        throw new Error("New password must be at least 6 characters long");
+        throw new Error(passwordValidation.message);
     }
 
     const user = await User.findById(req.user._id).select("+password");
@@ -309,6 +458,132 @@ export const changePassword = asyncHandler(async (req, res) => {
  * @route   PATCH /api/users/:id/status
  * @access  Private/Admin
  */
+/**
+ * @desc    Request password reset
+ * @route   POST /api/users/forgot-password
+ * @access  Public
+ */
+export const forgotPassword = asyncHandler(async (req, res) => {
+  // Import validation and email utilities
+  const { sanitizeEmail, validateEmail, validateRequired } = await import('../utils/validation.js');
+  const { sendPasswordResetEmail } = await import('../services/email.service.js');
+  const { generateVerificationToken } = await import('../services/email.service.js');
+
+  const email = sanitizeEmail(req.body.email || '');
+
+  // Validate email
+  const requiredValidation = validateRequired(['email'], { email });
+  if (!requiredValidation.valid) {
+    res.status(400);
+    throw new Error(requiredValidation.message);
+  }
+
+  if (!validateEmail(email)) {
+    res.status(400);
+    throw new Error("Please provide a valid email address");
+  }
+
+  // Find user by email
+  const user = await User.findOne({ email }).select('+passwordResetToken +passwordResetExpires');
+
+  if (!user) {
+    // Don't reveal if email exists (security best practice)
+    return res.status(200).json({
+      success: true,
+      message: "If an account with that email exists, a password reset link has been sent.",
+    });
+  }
+
+  // Generate reset token
+  const resetToken = generateVerificationToken();
+  const resetExpires = new Date();
+  resetExpires.setHours(resetExpires.getHours() + 1); // 1 hour expiry
+
+  // Save reset token
+  user.passwordResetToken = resetToken;
+  user.passwordResetExpires = resetExpires;
+  await user.save({ validateBeforeSave: false });
+
+  try {
+    // Send reset email
+    await sendPasswordResetEmail({
+      email: user.email,
+      name: user.name,
+      token: resetToken,
+    });
+
+    // Log password reset request
+    const { logPasswordReset } = await import('../utils/securityLogger.js');
+    logPasswordReset(user.email, true, req);
+
+    res.status(200).json({
+      success: true,
+      message: "Password reset email sent",
+    });
+  } catch (error) {
+    // Clear reset token if email fails
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+
+    console.error('Error sending password reset email:', error);
+    res.status(500);
+    throw new Error("Failed to send password reset email. Please try again later.");
+  }
+});
+
+/**
+ * @desc    Reset password with token
+ * @route   PUT /api/users/reset-password
+ * @access  Public
+ */
+export const resetPassword = asyncHandler(async (req, res) => {
+  // Import validation utilities
+  const { validatePassword, validateRequired } = await import('../utils/validation.js');
+
+  const { token, password } = req.body;
+
+  // Validation
+  const requiredValidation = validateRequired(['token', 'password'], { token, password });
+  if (!requiredValidation.valid) {
+    res.status(400);
+    throw new Error(requiredValidation.message);
+  }
+
+  const passwordValidation = validatePassword(password);
+  if (!passwordValidation.valid) {
+    res.status(400);
+    throw new Error(passwordValidation.message);
+  }
+
+  // Find user by token
+  const user = await User.findOne({
+    passwordResetToken: token,
+    passwordResetExpires: { $gt: Date.now() },
+  }).select('+passwordResetToken +passwordResetExpires');
+
+  if (!user) {
+    res.status(400);
+    throw new Error("Invalid or expired password reset token");
+  }
+
+  // Update password and clear reset token
+  user.password = password;
+  user.passwordResetToken = undefined;
+  user.passwordResetExpires = undefined;
+  await user.save();
+
+  // Log password reset success
+  const { logPasswordReset, logAuthEvent } = await import('../utils/securityLogger.js');
+  logPasswordReset(user.email, true, req);
+  logAuthEvent('password_reset', user._id, true, req);
+
+  res.status(200).json({
+    success: true,
+    message: "Password reset successfully. You can now log in with your new password.",
+  });
+});
+
 export const updateUserStatus = asyncHandler(async (req, res) => {
     const { status } = req.body;
 
@@ -329,6 +604,117 @@ export const updateUserStatus = asyncHandler(async (req, res) => {
     await user.save();
 
     res.status(200).json({ success: true, message: `User status updated to ${status}` });
+});
+
+/**
+ * @desc    Verify user email
+ * @route   GET /api/users/verify-email
+ * @access  Public
+ */
+export const verifyEmail = asyncHandler(async (req, res) => {
+  const { token } = req.query;
+
+  if (!token) {
+    res.status(400);
+    throw new Error("Verification token is required");
+  }
+
+  // Find user by verification token (need to select the hidden field)
+  const user = await User.findOne({ 
+    emailVerificationToken: token 
+  }).select("+emailVerificationToken +emailVerificationExpires");
+
+  // If user found with token, verify them
+  if (user) {
+    // Check if token has expired
+    if (user.emailVerificationExpires < new Date()) {
+      res.status(400);
+      throw new Error("Verification token has expired. Please request a new one.");
+    }
+
+    // Check if already verified (handles race conditions/double clicks)
+    if (user.emailVerified === true) {
+      return res.status(200).json({
+        success: true,
+        message: "Email already verified! You can log in to your account.",
+      });
+    }
+
+    // Verify the email
+    user.emailVerified = true;
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Email verified successfully! You can now log in to your account.",
+    });
+  }
+
+  // If no user found with token, it might already be verified
+  // Return success message instead of error to handle double-clicks gracefully
+  // This prevents user confusion when React StrictMode causes double renders
+  return res.status(200).json({
+    success: true,
+    message: "Email verification link has already been used. Your email is verified! You can log in to your account.",
+  });
+});
+
+/**
+ * @desc    Resend verification email
+ * @route   POST /api/users/resend-verification
+ * @access  Public
+ */
+export const resendVerificationEmail = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    res.status(400);
+    throw new Error("Email address is required");
+  }
+
+  // Find user
+  const user = await User.findOne({ email }).select("+emailVerificationToken +emailVerificationExpires");
+
+  if (!user) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+
+  // Check if already verified
+  if (user.emailVerified) {
+    res.status(400);
+    throw new Error("Email is already verified");
+  }
+
+  // Generate new verification token
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+  const verificationExpires = new Date();
+  verificationExpires.setHours(verificationExpires.getHours() + 24);
+
+  // Update user with new token
+  user.emailVerificationToken = verificationToken;
+  user.emailVerificationExpires = verificationExpires;
+  await user.save();
+
+  // Send verification email
+  try {
+    await sendVerificationEmail({
+      email: user.email,
+      name: user.name,
+      token: verificationToken,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Verification email sent successfully. Please check your inbox.",
+    });
+  } catch (emailError) {
+    console.error('Error sending verification email:', emailError);
+    res.status(500);
+    throw new Error("Failed to send verification email. Please try again later.");
+  }
 });
 
 

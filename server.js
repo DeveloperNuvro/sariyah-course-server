@@ -27,22 +27,43 @@ import adminRoutes from './routes/admin.routes.js';
 import productRoutes from './routes/product.routes.js';
 import cartRoutes from './routes/cart.routes.js';
 import digitalOrderRoutes from './routes/digitalOrder.routes.js';
+import projectInquiryRoutes from './routes/projectInquiry.routes.js';
 
 // Import Cloudinary configuration
 import './config/cloudinary.js';
 
+// Security middleware
+import { 
+  apiLimiter, 
+  authLimiter, 
+  inquiryLimiter,
+  securityHeaders, 
+  mongoSanitization, 
+  xssProtection,
+  validateRequestSize 
+} from './middleware/security.middleware.js';
+
 const app = express();
 
 const corsOptions = {
-  origin: ['https://www.sariyahtech.com'], // Production and development URLs
+  origin: ['https://www.sariyahtech.com', 'http://localhost:5173'], // Production and development URLs
   credentials: true,
 };
 
+// --- Security Middleware (apply early) ---
+app.use(securityHeaders);
+app.use(mongoSanitization);
+app.use(xssProtection);
+app.use(validateRequestSize);
+
 // --- Middleware ---
 app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' })); // Limit request body size
+app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Limit URL-encoded body size
 app.use(cookieParser());
+
+// --- Rate Limiting (apply to all routes by default) ---
+app.use('/api/', apiLimiter);
 
 // Database Connection (supports in-memory for local testing)
 async function connectDb() {
@@ -102,6 +123,7 @@ app.use('/api/admin', adminRoutes); // <-- ADD ADMIN ROUTES
 app.use('/api/products', productRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/dorders', digitalOrderRoutes);
+app.use('/api/project-inquiry', projectInquiryRoutes);
 
 // Simple health endpoint to verify DB and counts
 app.get('/api/health', async (req, res) => {

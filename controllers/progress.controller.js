@@ -112,8 +112,6 @@ export const updateProgress = asyncHandler(async (req, res) => {
     
 
     if (enrollment.completed) {
-      console.log(`\n\n✅ TRIGGER FIRED: Progress is 100% for student ${studentId} in course ${courseId}.`);
-    console.log("--- Attempting to call generateAndUploadCertificate... ---\n\n");
         generateAndUploadCertificate(studentId, courseId);
     }
   }

@@ -21,6 +21,11 @@ const userSchema = new mongoose.Schema({
   },
   refreshToken: { type: String, select: false },
   status: { type: String, enum: ["active", "inactive"], default: "active" },
+  emailVerified: { type: Boolean, default: false },
+  emailVerificationToken: { type: String, select: false },
+  emailVerificationExpires: { type: Date, select: false },
+  passwordResetToken: { type: String, select: false },
+  passwordResetExpires: { type: Date, select: false },
 }, { timestamps: true });
 
 // Pre-save hook to hash password before saving

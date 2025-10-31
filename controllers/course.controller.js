@@ -127,7 +127,7 @@ export const getCourseById = asyncHandler(async (req, res) => {
         .populate("category", "name");
 
     if (!course) {
-        res.status(44);
+        res.status(404);
         throw new Error("Course not found");
     }
     res.status(200).json({ success: true, data: course });
@@ -198,17 +198,75 @@ export const getMyCourses = asyncHandler(async (req, res) => {
 
 // @desc    Create a new course (Admin/Instructor)
 export const createCourse = asyncHandler(async (req, res) => {
-    const { title, description, price, category, level, language, discountPrice, groupLink } = req.body;
+    // Import validation utilities
+    const {
+        sanitizeString,
+        sanitizeText,
+        sanitizeUrl,
+        sanitizeNumber,
+        validateRequired,
+        validateLength,
+        validateObjectId,
+        validatePrice,
+    } = await import('../utils/validation.js');
 
-    // 1. Validation
-    if (!title || !description || !price || !category) {
+    // 1. Sanitize and validate inputs
+    const title = sanitizeString(req.body.title || '', 200);
+    const description = sanitizeText(req.body.description || '', 10000);
+    const price = sanitizeNumber(req.body.price, 0, 1000000);
+    const category = req.body.category ? String(req.body.category).trim() : '';
+    const level = sanitizeString(req.body.level || 'beginner', 20);
+    const language = sanitizeString(req.body.language || 'English', 50);
+    const discountPrice = req.body.discountPrice ? sanitizeNumber(req.body.discountPrice, 0, 1000000) : null;
+    const groupLink = req.body.groupLink ? sanitizeUrl(req.body.groupLink) : '';
+
+    // 2. Required fields validation
+    const requiredValidation = validateRequired(['title', 'description', 'price', 'category'], {
+        title,
+        description,
+        price: price !== null ? price : '',
+        category,
+    });
+    if (!requiredValidation.valid) {
         res.status(400);
-        throw new Error("Please provide title, description, price, and category");
+        throw new Error(requiredValidation.message);
     }
 
-    if (discountPrice && Number(discountPrice) >= Number(price)) {
+    // 3. Validate ObjectId for category
+    if (!validateObjectId(category)) {
+        res.status(400);
+        throw new Error("Invalid category ID");
+    }
+
+    // 4. Validate title length
+    if (!validateLength(title, 5, 200)) {
+        res.status(400);
+        throw new Error("Title must be between 5 and 200 characters");
+    }
+
+    // 5. Validate description length
+    if (!validateLength(description, 50, 10000)) {
+        res.status(400);
+        throw new Error("Description must be between 50 and 10000 characters");
+    }
+
+    // 6. Validate price
+    if (price === null || price < 0) {
+        res.status(400);
+        throw new Error("Price must be a valid positive number");
+    }
+
+    // 7. Validate discount price if provided
+    if (discountPrice !== null && discountPrice >= price) {
         res.status(400);
         throw new Error("Discount price must be less than the regular price");
+    }
+
+    // 8. Validate level
+    const allowedLevels = ['beginner', 'intermediate', 'advanced'];
+    if (!allowedLevels.includes(level.toLowerCase())) {
+        res.status(400);
+        throw new Error("Level must be one of: beginner, intermediate, advanced");
     }
 
     // 2. Check for thumbnail upload
@@ -217,14 +275,22 @@ export const createCourse = asyncHandler(async (req, res) => {
         throw new Error("Course thumbnail is required");
     }
 
-    // 3. Prepare data for new course
+    // 9. Prepare data for new course
     const courseData = {
-        ...req.body,
+        title,
+        description,
+        price,
+        category,
+        level: level.toLowerCase(),
+        language,
         instructor: req.user._id,
         thumbnail: req.file.path, // Secure URL from Cloudinary
     };
-    if (groupLink && typeof groupLink === 'string') {
-        courseData.groupLink = groupLink.trim();
+    if (discountPrice !== null) {
+        courseData.discountPrice = discountPrice;
+    }
+    if (groupLink) {
+        courseData.groupLink = groupLink;
     }
 
     // 4. Generate unique slug

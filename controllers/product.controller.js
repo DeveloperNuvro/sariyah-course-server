@@ -5,12 +5,54 @@ import cloudinary from "../config/cloudinary.js";
 
 export const createProduct = asyncHandler(async (req, res) => {
   try {
-    const { title, description, price, discountPrice, category, isPublished } = req.body;
+    // Import validation utilities
+    const {
+      sanitizeString,
+      sanitizeText,
+      sanitizeNumber,
+      sanitizeStringArray,
+      validateRequired,
+      validateLength,
+      validateObjectId,
+    } = await import('../utils/validation.js');
 
-  if (!title || price === undefined) {
-    res.status(400);
-    throw new Error("Title and price are required");
-  }
+    // 1. Sanitize inputs
+    const title = sanitizeString(req.body.title || '', 200);
+    const description = sanitizeText(req.body.description || '', 5000);
+    const price = sanitizeNumber(req.body.price, 0, 1000000, null);
+    const discountPrice = req.body.discountPrice ? sanitizeNumber(req.body.discountPrice, 0, 1000000, null) : null;
+    const category = req.body.category ? String(req.body.category).trim() : '';
+    const isPublished = req.body.isPublished === true || req.body.isPublished === 'true';
+
+    // 2. Required fields validation
+    if (!title || price === null) {
+      res.status(400);
+      throw new Error("Title and price are required");
+    }
+
+    // 3. Validate title length
+    if (!validateLength(title, 3, 200)) {
+      res.status(400);
+      throw new Error("Title must be between 3 and 200 characters");
+    }
+
+    // 4. Validate price
+    if (price < 0) {
+      res.status(400);
+      throw new Error("Price must be a valid positive number");
+    }
+
+    // 5. Validate discount price if provided
+    if (discountPrice !== null && discountPrice >= price) {
+      res.status(400);
+      throw new Error("Discount price must be less than regular price");
+    }
+
+    // 6. Validate category if provided
+    if (category && !validateObjectId(category)) {
+      res.status(400);
+      throw new Error("Invalid category ID");
+    }
 
   const slug = slugify(title, { lower: true, strict: true });
   const exists = await Product.findOne({ slug });
@@ -44,26 +86,30 @@ export const createProduct = asyncHandler(async (req, res) => {
     filesArray = req.body.files;
   }
 
-  // Normalize tags from either tags (string or array) or tags[] from multipart form
+  // 7. Normalize and sanitize tags
   let incomingTags = req.body.tags;
   if (!incomingTags && req.body["tags[]"]) {
-    incomingTags = req.body["tags[]"]; // could be string or array
+    incomingTags = req.body["tags[]"];
   }
-  const tagsArray = Array.isArray(incomingTags)
-    ? incomingTags.map((t) => String(t).trim()).filter(Boolean)
-    : typeof incomingTags === 'string'
-      ? incomingTags.split(',').map((t) => t.trim()).filter(Boolean)
-      : [];
+  const tagsArray = sanitizeStringArray(
+    Array.isArray(incomingTags)
+      ? incomingTags
+      : typeof incomingTags === 'string'
+        ? incomingTags.split(',')
+        : [],
+    50, // max tag length
+    20  // max number of tags
+  );
 
   const product = await Product.create({
     title,
     slug,
-    description,
+    description: description || '',
     price,
     discountPrice: discountPrice || 0,
     thumbnail: thumbnailUrl,
     files: filesArray,
-    category,
+    category: category || undefined,
     tags: tagsArray,
     isPublished: !!isPublished,
     createdBy: req.user?._id,

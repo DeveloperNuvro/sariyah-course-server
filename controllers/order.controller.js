@@ -3,17 +3,26 @@
 import Order from "../models/order.model.js";
 import Course from "../models/course.model.js";
 import Enrollment from "../models/enrollment.model.js";
+import User from "../models/user.model.js";
 import asyncHandler from "express-async-handler";
 import { v2 as cloudinary } from 'cloudinary';
+import { sendCoursePurchaseConfirmation } from "../services/email.service.js";
 
 export const createOrder = asyncHandler(async (req, res) => {
+  // Import validation utilities
+  const { sanitizeString, validateObjectId } = await import('../utils/validation.js');
+
   // We don't require payment details for free courses, so they can be optional
-  const { courseId, paymentMethod, paymentNumber, transactionId } = req.body;
+  const courseId = req.body.courseId ? String(req.body.courseId).trim() : '';
+  const paymentMethod = req.body.paymentMethod ? sanitizeString(req.body.paymentMethod, 50) : '';
+  const paymentNumber = req.body.paymentNumber ? sanitizeString(String(req.body.paymentNumber), 50) : '';
+  const transactionId = req.body.transactionId ? sanitizeString(req.body.transactionId, 100) : '';
   const userId = req.user._id;
 
-  if (!courseId) {
+  // Validate courseId
+  if (!courseId || !validateObjectId(courseId)) {
     res.status(400);
-    throw new Error("Course ID is required");
+    throw new Error("Valid course ID is required");
   }
 
   const course = await Course.findById(courseId);
@@ -33,7 +42,7 @@ export const createOrder = asyncHandler(async (req, res) => {
 
   if (isFreeCourse) {
     // 1. Create an Order record for tracking purposes (optional but good practice)
-    await Order.create({
+    const order = await Order.create({
       user: userId,
       course: courseId,
       amount: 0,
@@ -49,6 +58,25 @@ export const createOrder = asyncHandler(async (req, res) => {
       course: courseId,
     });
     
+    // 3. Send confirmation email (async, don't block response)
+    try {
+      const user = await User.findById(userId).select('name email');
+      if (user && user.email) {
+        await sendCoursePurchaseConfirmation({
+          email: user.email,
+          name: user.name,
+          courseTitle: course.title,
+          courseSlug: course.slug,
+          amount: 0,
+          orderId: order._id.toString(),
+          groupLink: course.groupLink || '',
+        });
+      }
+    } catch (emailError) {
+      console.error('Error sending course purchase confirmation email:', emailError);
+      // Don't fail the request if email fails
+    }
+    
     return res.status(201).json({
       success: true,
       message: "Successfully enrolled in the free course!",
@@ -62,6 +90,13 @@ export const createOrder = asyncHandler(async (req, res) => {
   if (!paymentMethod || !paymentNumber || !transactionId) {
     res.status(400);
     throw new Error("Payment method, number, and transaction ID are required for paid courses.");
+  }
+
+  // Validate payment method format
+  const allowedPaymentMethods = ['bkash', 'nagad', 'rocket', 'bank', 'card', 'cash'];
+  if (!allowedPaymentMethods.includes(paymentMethod.toLowerCase())) {
+    res.status(400);
+    throw new Error("Invalid payment method");
   }
 
   const existingOrder = await Order.findOne({ user: userId, course: courseId, paymentStatus: { $in: ['pending', 'paid'] } });
@@ -225,6 +260,28 @@ export const updateOrderStatus = asyncHandler(async (req, res) => {
                 course: order.course
             });
         }
+        
+        // Send confirmation email (async, don't block response)
+        try {
+            const populatedOrder = await Order.findById(order._id)
+                .populate('user', 'name email')
+                .populate('course', 'title slug groupLink');
+            
+            if (populatedOrder && populatedOrder.user && populatedOrder.user.email && populatedOrder.course) {
+                await sendCoursePurchaseConfirmation({
+                    email: populatedOrder.user.email,
+                    name: populatedOrder.user.name,
+                    courseTitle: populatedOrder.course.title,
+                    courseSlug: populatedOrder.course.slug,
+                    amount: order.amount,
+                    orderId: order._id.toString(),
+                    groupLink: populatedOrder.course.groupLink || '',
+                });
+            }
+        } catch (emailError) {
+            console.error('Error sending course purchase confirmation email:', emailError);
+            // Don't fail the request if email fails
+        }
     }
     
     const updatedOrder = await order.save();
@@ -270,6 +327,28 @@ export const updateOrder = asyncHandler(async (req, res) => {
                 student: order.user,
                 course: order.course
             });
+        }
+        
+        // Send confirmation email (async, don't block response)
+        try {
+            const populatedOrder = await Order.findById(order._id)
+                .populate('user', 'name email')
+                .populate('course', 'title slug groupLink');
+            
+            if (populatedOrder && populatedOrder.user && populatedOrder.user.email && populatedOrder.course) {
+                await sendCoursePurchaseConfirmation({
+                    email: populatedOrder.user.email,
+                    name: populatedOrder.user.name,
+                    courseTitle: populatedOrder.course.title,
+                    courseSlug: populatedOrder.course.slug,
+                    amount: order.amount,
+                    orderId: order._id.toString(),
+                    groupLink: populatedOrder.course.groupLink || '',
+                });
+            }
+        } catch (emailError) {
+            console.error('Error sending course purchase confirmation email:', emailError);
+            // Don't fail the request if email fails
         }
     }
 

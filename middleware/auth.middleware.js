@@ -2,7 +2,8 @@
 
 import jwt from "jsonwebtoken";
 import asyncHandler from "express-async-handler";
-import User from "../models/user.model.js"; // Adjust the path to your user model
+import User from "../models/user.model.js";
+import { logAuthEvent, logAuthorizationEvent } from "../utils/securityLogger.js";
 
 /**
  * @desc Protect routes by verifying JWT access token
@@ -30,8 +31,16 @@ const protect = asyncHandler(async (req, res, next) => {
       req.user = await User.findById(decoded.id).select("-password");
       
       if (!req.user) {
+         logAuthEvent('token_verification', decoded.id, false, req);
          res.status(401);
          throw new Error("Not authorized, user not found");
+      }
+
+      // Check if user account is active
+      if (req.user.status === 'inactive') {
+        logAuthorizationEvent('access_denied', req.user._id, req.path, false, req);
+        res.status(403);
+        throw new Error("Your account has been deactivated. Please contact support.");
       }
 
       next();
@@ -62,9 +71,17 @@ const protect = asyncHandler(async (req, res, next) => {
 const authorize = (...roles) => {
   return (req, res, next) => {
     if (!req.user || !roles.includes(req.user.role)) {
+      logAuthorizationEvent(
+        'unauthorized_access',
+        req.user?._id || null,
+        req.path,
+        false,
+        req
+      );
       res.status(403); // Forbidden
       throw new Error(`User role '${req.user.role}' is not authorized to access this route`);
     }
+    logAuthorizationEvent('authorized_access', req.user._id, req.path, true, req);
     next();
   };
 };

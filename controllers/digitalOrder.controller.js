@@ -3,7 +3,9 @@ import crypto from "crypto";
 import Cart from "../models/cart.model.js";
 import DigitalOrder from "../models/digitalOrder.model.js";
 import Product from "../models/product.model.js";
+import User from "../models/user.model.js";
 import cloudinary from "../config/cloudinary.js";
+import { sendProductPurchaseConfirmation } from "../services/email.service.js";
 
 function generateToken() {
   return crypto.randomBytes(24).toString("hex");
@@ -41,6 +43,29 @@ export const checkoutFromCart = asyncHandler(async (req, res) => {
     const tokens = items.map((it) => ({ product: it.product, token: generateToken(), expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }));
     order.downloadTokens = tokens;
     await order.save();
+    
+    // Send confirmation email (async, don't block response)
+    try {
+      const user = await User.findById(userId).select('name email');
+      if (user && user.email) {
+        const emailItems = items.map(item => ({
+          title: item.titleSnapshot || 'Product',
+          price: item.price || 0,
+        }));
+        
+        await sendProductPurchaseConfirmation({
+          email: user.email,
+          name: user.name,
+          items: emailItems,
+          totalAmount: 0,
+          orderId: order._id.toString(),
+        });
+      }
+    } catch (emailError) {
+      console.error('Error sending product purchase confirmation email:', emailError);
+      // Don't fail the request if email fails
+    }
+    
     // clear cart
     cart.items = [];
     cart.subtotal = 0;
@@ -105,6 +130,9 @@ export const adminMarkPaid = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error("Order not found");
   }
+  // Store previous status to check if it changed
+  const previousStatus = order.paymentStatus;
+  
   // Update status
   if (paymentStatus) {
     order.paymentStatus = paymentStatus;
@@ -115,9 +143,36 @@ export const adminMarkPaid = asyncHandler(async (req, res) => {
   if (order.paymentStatus === "paid") {
     const tokens = order.items.map((it) => ({ product: it.product, token: generateToken(), expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) }));
     order.downloadTokens = tokens;
+    
+    // Send confirmation email only if status changed to paid (not already paid)
+    if (previousStatus !== "paid") {
+      try {
+        const populatedOrder = await DigitalOrder.findById(order._id)
+          .populate('user', 'name email');
+        
+        if (populatedOrder && populatedOrder.user && populatedOrder.user.email) {
+          const emailItems = order.items.map(item => ({
+            title: item.titleSnapshot || 'Product',
+            price: item.price || 0,
+          }));
+          
+          await sendProductPurchaseConfirmation({
+            email: populatedOrder.user.email,
+            name: populatedOrder.user.name,
+            items: emailItems,
+            totalAmount: order.amount,
+            orderId: order._id.toString(),
+          });
+        }
+      } catch (emailError) {
+        console.error('Error sending product purchase confirmation email:', emailError);
+        // Don't fail the request if email fails
+      }
+    }
   } else {
     order.downloadTokens = [];
   }
+  
   await order.save();
   res.status(200).json({ success: true, data: order });
 });

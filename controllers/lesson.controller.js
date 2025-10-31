@@ -44,7 +44,7 @@ const recalculateProgressForAllStudents = async (courseId) => {
       }
     }
     
-    console.log(`Progress recalculated for ${enrollments.length} students in course ${courseId}`);
+    // Progress recalculated silently
   } catch (error) {
     console.error('Error recalculating progress:', error);
   }
@@ -125,50 +125,36 @@ export const getLessonsForCourse = asyncHandler(async (req, res) => {
 
     let isAuthorized = false;
     
-    // --- ROBUST AUTHORIZATION CHECK WITH LOGGING ---
-    console.log("\n--- [LESSON AUTH CHECK] ---");
+    // --- AUTHORIZATION CHECK ---
     const authHeader = req.headers.authorization;
 
     if (authHeader && authHeader.startsWith("Bearer")) {
         const token = authHeader.split(" ")[1];
-        console.log("[LESSON AUTH CHECK] Token found.");
         try {
             const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-            console.log("[LESSON AUTH CHECK] Token decoded successfully. User ID from token:", decoded.id);
-
             const loggedInUser = await User.findById(decoded.id).lean();
 
             if (loggedInUser) {
-                console.log(`[LESSON AUTH CHECK] User found in DB: ${loggedInUser.name} (${loggedInUser.role})`);
-                
                 const isInstructor = course.instructor.equals(loggedInUser._id);
                 const isAdmin = loggedInUser.role === 'admin';
                 const isEnrolled = await Enrollment.findOne({ student: loggedInUser._id, course: courseId });
 
-                console.log(`[LESSON AUTH CHECK] Is Instructor: ${isInstructor}, Is Admin: ${isAdmin}, Is Enrolled: ${!!isEnrolled}`);
-
                 if (isInstructor || isAdmin || isEnrolled) {
                     isAuthorized = true;
-                    console.log("[LESSON AUTH CHECK] User IS AUTHORIZED.");
-                } else {
-                    console.log("[LESSON AUTH CHECK] User is NOT AUTHORIZED (not instructor, admin, or enrolled).");
                 }
-            } else {
-                console.log("[LESSON AUTH CHECK] User ID from token not found in database.");
             }
         } catch (error) {
-            console.error("[LESSON AUTH CHECK] Token verification failed:", error.message);
+            // Token verification failed - user not authorized
+            if (process.env.NODE_ENV === 'development') {
+                console.error("[LESSON AUTH CHECK] Token verification failed:", error.message);
+            }
         }
-    } else {
-        console.log("[LESSON AUTH CHECK] No Authorization header found. Treating as public user.");
     }
-    console.log("--- [END LESSON AUTH CHECK] ---\n");
     // --- END OF AUTHORIZATION BLOCK ---
 
     const lessons = await Lesson.find({ course: courseId }).sort({ order: "asc" }).lean();
 
     if (!isAuthorized) {
-        console.log("Sanitizing lesson data for public view.");
         lessons.forEach(lesson => {
             delete lesson.videoUrl;
             delete lesson.quiz;

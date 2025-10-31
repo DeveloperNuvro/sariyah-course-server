@@ -14,11 +14,23 @@ export const getMyCart = asyncHandler(async (req, res) => {
 });
 
 export const addToCart = asyncHandler(async (req, res) => {
+  // Import validation utilities
+  const { sanitizeNumber, validateObjectId } = await import('../utils/validation.js');
+
   const userId = req.user._id;
-  const { productId, quantity = 1 } = req.body;
-  if (!productId) {
+  const productId = req.body.productId ? String(req.body.productId).trim() : '';
+  const quantity = sanitizeNumber(req.body.quantity || 1, 1, 100, 1);
+
+  // Validate productId
+  if (!productId || !validateObjectId(productId)) {
     res.status(400);
-    throw new Error("productId is required");
+    throw new Error("Valid product ID is required");
+  }
+
+  // Validate quantity
+  if (quantity < 1 || quantity > 100) {
+    res.status(400);
+    throw new Error("Quantity must be between 1 and 100");
   }
 
   const product = await Product.findById(productId);
@@ -35,9 +47,9 @@ export const addToCart = asyncHandler(async (req, res) => {
 
   const existing = cart.items.find((it) => it.product.toString() === productId);
   if (existing) {
-    existing.quantity += Number(quantity);
+    existing.quantity = Math.min(existing.quantity + quantity, 100); // Cap at 100
   } else {
-    cart.items.push({ product: product._id, quantity: Number(quantity), price });
+    cart.items.push({ product: product._id, quantity, price });
   }
   cart.subtotal = computeSubtotal(cart.items);
   await cart.save();
@@ -46,11 +58,22 @@ export const addToCart = asyncHandler(async (req, res) => {
 });
 
 export const updateCartItem = asyncHandler(async (req, res) => {
+  // Import validation utilities
+  const { sanitizeNumber, validateObjectId } = await import('../utils/validation.js');
+
   const userId = req.user._id;
-  const { productId, quantity } = req.body;
-  if (!productId || quantity === undefined) {
+  const productId = req.body.productId ? String(req.body.productId).trim() : '';
+  const quantity = sanitizeNumber(req.body.quantity, 1, 100, null);
+
+  // Validate inputs
+  if (!productId || !validateObjectId(productId)) {
     res.status(400);
-    throw new Error("productId and quantity are required");
+    throw new Error("Valid product ID is required");
+  }
+
+  if (quantity === null || quantity < 1 || quantity > 100) {
+    res.status(400);
+    throw new Error("Quantity must be between 1 and 100");
   }
 
   const cart = await Cart.findOne({ user: userId });
