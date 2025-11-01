@@ -9,6 +9,7 @@ import Enrollment from '../models/enrollment.model.js';
 import Order from '../models/order.model.js';
 import QuizScore from '../models/quizScore.model.js';
 import asyncHandler from 'express-async-handler';
+import { sendCoursePurchaseConfirmation } from '../services/email.service.js';
 
 // =================================================================
 // USER MANAGEMENT
@@ -808,6 +809,28 @@ export const updateOrderAdmin = asyncHandler(async (req, res) => {
                 student: order.user,
                 course: order.course
             });
+        }
+        
+        // Send confirmation email (async, don't block response)
+        try {
+            const populatedOrder = await Order.findById(order._id)
+                .populate('user', 'name email')
+                .populate('course', 'title slug groupLink');
+            
+            if (populatedOrder && populatedOrder.user && populatedOrder.user.email && populatedOrder.course) {
+                await sendCoursePurchaseConfirmation({
+                    email: populatedOrder.user.email,
+                    name: populatedOrder.user.name,
+                    courseTitle: populatedOrder.course.title,
+                    courseSlug: populatedOrder.course.slug,
+                    amount: order.amount,
+                    orderId: order._id.toString(),
+                    groupLink: populatedOrder.course.groupLink || '',
+                });
+            }
+        } catch (emailError) {
+            console.error('Error sending course purchase confirmation email:', emailError);
+            // Don't fail the request if email fails
         }
     }
 
