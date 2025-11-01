@@ -284,7 +284,7 @@ export const createCourse = asyncHandler(async (req, res) => {
         level: level.toLowerCase(),
         language,
         instructor: req.user._id,
-        thumbnail: req.file.path, // Secure URL from Cloudinary
+        thumbnail: req.file.secure_url || req.file.url || req.file.path, // Secure URL from Cloudinary
     };
     if (discountPrice !== null) {
         courseData.discountPrice = discountPrice;
@@ -334,10 +334,36 @@ export const updateCourse = asyncHandler(async (req, res) => {
 
     // Handle thumbnail update
     if (req.file) {
-        // Delete old thumbnail from Cloudinary
-        const publicId = course.thumbnail.split('/').pop().split('.')[0];
-        await cloudinary.uploader.destroy(`lms/thumbnails/${publicId}`);
-        req.body.thumbnail = req.file.path; // Set new URL
+        // Delete old thumbnail from Cloudinary if it exists
+        if (course.thumbnail) {
+            try {
+                // Extract publicId from Cloudinary URL (handles various URL formats)
+                let publicId = '';
+                if (course.thumbnail.includes('/v')) {
+                    // Format: https://res.cloudinary.com/.../v1234567890/lms/thumbnails/filename
+                    const match = course.thumbnail.match(/\/v\d+\/(.+?)(?:\?.*)?$/);
+                    if (match) {
+                        publicId = match[1];
+                    }
+                } else {
+                    // Fallback: extract from path
+                    publicId = course.thumbnail.split('/').pop().split('.')[0];
+                    if (!publicId.includes('lms/thumbnails/')) {
+                        publicId = `lms/thumbnails/${publicId}`;
+                    }
+                }
+                
+                if (publicId) {
+                    await cloudinary.uploader.destroy(publicId);
+                }
+            } catch (deleteError) {
+                console.error('Error deleting old thumbnail:', deleteError);
+                // Don't fail the request if old thumbnail deletion fails
+            }
+        }
+        
+        // Use secure_url (HTTPS) if available, otherwise fallback to url or path
+        req.body.thumbnail = req.file.secure_url || req.file.url || req.file.path;
     }
 
     // Filter out empty strings and undefined values to prevent ObjectId casting errors
@@ -496,4 +522,70 @@ export const getCourseGroupLink = asyncHandler(async (req, res) => {
         throw new Error('Not authorized to view group link');
     }
     res.json({ success: true, data: { groupLink: course.groupLink || '' } });
+});
+
+/**
+ * @desc    Update course thumbnail image
+ * @route   PATCH /api/courses/:id/thumbnail
+ * @access  Private/Instructor or Private/Admin
+ */
+export const updateCourseThumbnail = asyncHandler(async (req, res) => {
+    const course = await Course.findById(req.params.id);
+    
+    if (!course) {
+        res.status(404);
+        throw new Error("Course not found");
+    }
+
+    // Authorization check
+    if (course.instructor.toString() !== req.user.id && req.user.role !== "admin") {
+        res.status(403);
+        throw new Error("User not authorized to update this course");
+    }
+
+    // Check if thumbnail file was uploaded
+    if (!req.file) {
+        res.status(400);
+        throw new Error("Thumbnail image is required");
+    }
+
+    // Delete old thumbnail from Cloudinary if it exists
+    if (course.thumbnail) {
+        try {
+            // Extract publicId from Cloudinary URL (handles various URL formats)
+            let publicId = '';
+            if (course.thumbnail.includes('/v')) {
+                // Format: https://res.cloudinary.com/.../v1234567890/lms/thumbnails/filename
+                const match = course.thumbnail.match(/\/v\d+\/(.+?)(?:\?.*)?$/);
+                if (match) {
+                    publicId = match[1];
+                }
+            } else {
+                // Fallback: extract from path
+                publicId = course.thumbnail.split('/').pop().split('.')[0];
+                if (!publicId.includes('lms/thumbnails/')) {
+                    publicId = `lms/thumbnails/${publicId}`;
+                }
+            }
+            
+            if (publicId) {
+                await cloudinary.uploader.destroy(publicId);
+            }
+        } catch (deleteError) {
+            console.error('Error deleting old thumbnail:', deleteError);
+            // Don't fail the request if old thumbnail deletion fails
+        }
+    }
+
+    // Use secure_url (HTTPS) if available, otherwise fallback to url or path
+    const thumbnailUrl = req.file.secure_url || req.file.url || req.file.path;
+    course.thumbnail = thumbnailUrl;
+    
+    const updatedCourse = await course.save();
+
+    res.status(200).json({
+        success: true,
+        message: "Course thumbnail updated successfully",
+        data: updatedCourse
+    });
 });

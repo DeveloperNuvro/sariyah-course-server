@@ -110,7 +110,7 @@ export const createOrder = asyncHandler(async (req, res) => {
   // Handle payment slip upload
   let paymentSlipUrl = "";
   if (req.file) {
-    // Cloudinary returns the URL in different properties depending on the version
+    // Use secure_url (HTTPS) if available for frontend compatibility, otherwise fallback
     paymentSlipUrl = req.file.secure_url || req.file.url || req.file.path;
   }
 
@@ -384,11 +384,33 @@ export const updatePaymentSlip = asyncHandler(async (req, res) => {
     if (req.file) {
         // If order already has a payment slip, delete the old one from Cloudinary
         if (order.paymentSlip) {
-            const publicId = order.paymentSlip.split('/').pop().split('.')[0];
-            await cloudinary.uploader.destroy(`lms/payment-slips/${publicId}`);
+            try {
+                // Extract publicId from Cloudinary URL (handles various URL formats)
+                let publicId = '';
+                if (order.paymentSlip.includes('/v')) {
+                    // Format: https://res.cloudinary.com/.../v1234567890/lms/payment-slips/filename
+                    const match = order.paymentSlip.match(/\/v\d+\/(.+?)(?:\?.*)?$/);
+                    if (match) {
+                        publicId = match[1];
+                    }
+                } else {
+                    // Fallback: extract from path
+                    publicId = order.paymentSlip.split('/').pop().split('.')[0];
+                    if (!publicId.includes('lms/payment-slips/')) {
+                        publicId = `lms/payment-slips/${publicId}`;
+                    }
+                }
+                
+                if (publicId) {
+                    await cloudinary.uploader.destroy(publicId);
+                }
+            } catch (deleteError) {
+                console.error('Error deleting old payment slip:', deleteError);
+                // Don't fail the request if old payment slip deletion fails
+            }
         }
         
-        // Cloudinary returns the URL in different properties depending on the version
+        // Use secure_url (HTTPS) if available for frontend compatibility, otherwise fallback
         const paymentSlipUrl = req.file.secure_url || req.file.url || req.file.path;
         order.paymentSlip = paymentSlipUrl;
     }

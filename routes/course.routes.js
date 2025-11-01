@@ -11,7 +11,8 @@ import {
     togglePublishStatus,
     toggleEndedStatus,
     getAllCoursesAdmin,
-    getCourseGroupLink
+    getCourseGroupLink,
+    updateCourseThumbnail
 } from '../controllers/course.controller.js';
 import { protect, authorize } from '../middleware/auth.middleware.js';
 import { uploadThumbnail } from '../middleware/upload.middleware.js';
@@ -64,6 +65,9 @@ router.route('/:id/publish')
 
 router.route('/:id/end')
     .patch(protect, authorize('instructor', 'admin'), toggleEndedStatus);
+
+router.route('/:id/thumbnail')
+    .patch(protect, authorize('instructor', 'admin'), uploadThumbnail, updateCourseThumbnail);
 
 router.get('/all', protect, authorize('admin'), getAllCoursesAdmin);
 
