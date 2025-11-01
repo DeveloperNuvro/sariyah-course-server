@@ -178,16 +178,54 @@ export const loginUser = asyncHandler(async (req, res) => {
   // Import security logger
   const { logAuthEvent } = await import('../utils/securityLogger.js');
 
-  // 2. Check for user and include password in the query result
-  const user = await User.findOne({ email }).select("+password");
+  // 2. Check for user and include password and verification token fields in the query result
+  const user = await User.findOne({ email }).select("+password +emailVerificationToken +emailVerificationExpires");
 
   // 3. Check if user exists and password is correct
   if (user && (await user.comparePassword(password))) {
     logAuthEvent('login', user._id, true, req);
     // 4. Check if email is verified
     if (!user.emailVerified && user.role !== 'admin') {
-      res.status(403); // Forbidden
-      throw new Error("Please verify your email address before logging in. Check your inbox for the verification link.");
+      // Generate or reuse verification token
+      let verificationToken = user.emailVerificationToken;
+      const needsNewToken = !verificationToken || 
+                           !user.emailVerificationExpires || 
+                           user.emailVerificationExpires < new Date();
+
+      if (needsNewToken) {
+        // Generate new verification token
+        verificationToken = crypto.randomBytes(32).toString('hex');
+        const verificationExpires = new Date();
+        verificationExpires.setHours(verificationExpires.getHours() + 24); // 24 hours expiry
+
+        // Update user with new token
+        user.emailVerificationToken = verificationToken;
+        user.emailVerificationExpires = verificationExpires;
+        await user.save({ validateBeforeSave: false });
+      }
+
+      // Send verification email
+      try {
+        await sendVerificationEmail({
+          email: user.email,
+          name: user.name,
+          token: verificationToken,
+        });
+
+        return res.status(403).json({
+          success: false,
+          message: "Please verify your email address before logging in. A new verification email has been sent to your inbox. Please check your email and click the verification link.",
+          emailSent: true,
+        });
+      } catch (emailError) {
+        console.error('Error sending verification email on login:', emailError);
+        // If email fails, still inform user but mention they can use resend endpoint
+        return res.status(403).json({
+          success: false,
+          message: "Please verify your email address before logging in. Please use the 'Resend Verification Email' option or check your inbox for the verification link.",
+          emailSent: false,
+        });
+      }
     }
 
     // 5. Check if user account is active
