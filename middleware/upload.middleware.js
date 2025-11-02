@@ -34,7 +34,19 @@ const paymentSlipStorage = new CloudinaryStorage({
   },
 });
 
-export const uploadAvatar = multer({ storage: avatarStorage }).single("avatar");
+export const uploadAvatar = multer({ 
+  storage: avatarStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    // Validate file type if file is provided (file is optional)
+    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only JPEG and PNG images are allowed'), false);
+    }
+  }
+}).single("avatar");
 export const uploadThumbnail = multer({ storage: thumbnailStorage }).single("thumbnail");
 export const uploadPaymentSlip = multer({ storage: paymentSlipStorage }).single("paymentSlip");
 
@@ -65,4 +77,22 @@ export const uploadProductAssets = multer({
 }).fields([
   { name: "thumbnail", maxCount: 1 },
   { name: "files", maxCount: 10 },
+]);
+
+// Blog-specific storage for featured images
+const blogStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "lms/blog",
+    allowed_formats: ["jpg", "png", "jpeg", "webp"],
+    transformation: [
+      { width: 1200, height: 630, crop: "fill", quality: "auto", fetch_format: "auto" }
+    ],
+  },
+});
+
+export const uploadBlogAssets = multer({
+  storage: blogStorage,
+}).fields([
+  { name: "featuredImage", maxCount: 1 },
 ]);

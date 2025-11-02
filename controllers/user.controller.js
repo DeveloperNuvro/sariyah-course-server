@@ -6,6 +6,14 @@ import jwt from "jsonwebtoken";
 import { v2 as cloudinary } from 'cloudinary';
 import { generateVerificationToken, sendVerificationEmail } from '../services/email.service.js';
 import crypto from 'crypto';
+import {
+    sanitizeString,
+    sanitizeEmail,
+    sanitizeText,
+    validateEmail,
+    validateLength,
+    validateRequired,
+} from '../utils/validation.js';
 
 // --- Helper Function to Generate Tokens and Set Cookie ---
 const generateTokensAndSetCookie = async (userId, res) => {
@@ -354,90 +362,149 @@ export const getUserProfile = asyncHandler(async (req, res) => {
  * @access  Private
  */
 export const updateUserProfile = asyncHandler(async (req, res) => {
-    // Import validation utilities
-    const {
-        sanitizeString,
-        sanitizeEmail,
-        sanitizeText,
-        validateEmail,
-        validateLength,
-        validateRequired,
-    } = await import('../utils/validation.js');
-    
-    const user = await User.findById(req.user._id);
+    try {
+        const user = await User.findById(req.user._id);
 
-    if (!user) {
-        res.status(404);
-        throw new Error("User not found");
-    }
-
-    // Sanitize and validate inputs
-    const name = req.body.name ? sanitizeString(req.body.name, 100) : user.name;
-    const email = req.body.email ? sanitizeEmail(req.body.email) : user.email;
-    const bio = req.body.bio ? sanitizeText(req.body.bio, 500) : user.bio;
-
-    // Validate name if provided
-    if (req.body.name && !validateLength(name, 2, 100)) {
-        res.status(400);
-        throw new Error("Name must be between 2 and 100 characters");
-    }
-
-    // Validate email if provided
-    if (req.body.email) {
-        if (!validateEmail(email)) {
-            res.status(400);
-            throw new Error("Please provide a valid email address");
+        if (!user) {
+            res.status(404);
+            throw new Error("User not found");
         }
-        // Check if email is already taken by another user
-        const emailExists = await User.findOne({ email, _id: { $ne: user._id } });
-        if (emailExists) {
-            res.status(409);
-            throw new Error("Email is already in use");
+
+        // Debug logging
+        console.log('Profile update request body:', {
+            name: req.body?.name,
+            email: req.body?.email,
+            bio: req.body?.bio,
+            hasFile: !!req.file,
+            contentType: req.headers['content-type']
+        });
+
+        // Handle both JSON and FormData
+        // When FormData is used, fields come as strings, when JSON they come as-is
+        let bodyName = undefined;
+        let bodyEmail = undefined;
+        let bodyBio = undefined;
+        
+        if (req.body?.name !== undefined && req.body?.name !== null && req.body?.name !== '') {
+            bodyName = typeof req.body.name === 'string' ? req.body.name.trim() : String(req.body.name);
         }
-    }
+        if (req.body?.email !== undefined && req.body?.email !== null && req.body?.email !== '') {
+            bodyEmail = typeof req.body.email === 'string' ? req.body.email.trim() : String(req.body.email);
+        }
+        if (req.body?.bio !== undefined && req.body?.bio !== null) {
+            // Bio can be empty string to clear it
+            bodyBio = typeof req.body.bio === 'string' ? req.body.bio.trim() : String(req.body.bio || '');
+        }
 
-    // Validate bio length if provided
-    if (req.body.bio && !validateLength(bio, 0, 500)) {
-        res.status(400);
-        throw new Error("Bio must be less than 500 characters");
-    }
-
-    // Update text fields
-    user.name = name;
-    user.email = email;
-    user.bio = bio;
-    
-    // Update nested socialLinks object
-    if(req.body.socialLinks) {
-        const socialLinks = JSON.parse(req.body.socialLinks);
-        user.socialLinks.facebook = socialLinks.facebook || user.socialLinks.facebook;
-        user.socialLinks.twitter = socialLinks.twitter || user.socialLinks.twitter;
-        user.socialLinks.linkedin = socialLinks.linkedin || user.socialLinks.linkedin;
-        user.socialLinks.youtube = socialLinks.youtube || user.socialLinks.youtube;
-    }
-
-    // Update avatar if a new file is uploaded
-    if (req.file) {
-        // If user already has an avatar, delete the old one from Cloudinary
-        if(user.avatar) {
-            const publicId = user.avatar.split('/').pop().split('.')[0];
-            await cloudinary.uploader.destroy(`lms/avatars/${publicId}`);
+        // Sanitize and validate inputs
+        let name = user.name;
+        let email = user.email;
+        let bio = user.bio;
+        
+        if (bodyName !== undefined && bodyName !== '') {
+            const sanitizedName = sanitizeString(bodyName, 100);
+            if (!validateLength(sanitizedName, 2, 100)) {
+                res.status(400);
+                throw new Error("Name must be between 2 and 100 characters");
+            }
+            name = sanitizedName;
         }
         
-        // Cloudinary returns the URL in different properties depending on the version
-        // Try different possible properties
-        const avatarUrl = req.file.secure_url || req.file.url || req.file.path;
+        if (bodyEmail !== undefined && bodyEmail !== '') {
+            const sanitizedEmail = sanitizeEmail(bodyEmail);
+            if (!validateEmail(sanitizedEmail)) {
+                res.status(400);
+                throw new Error("Please provide a valid email address");
+            }
+            // Check if email is already taken by another user
+            const emailExists = await User.findOne({ email: sanitizedEmail, _id: { $ne: user._id } });
+            if (emailExists) {
+                res.status(409);
+                throw new Error("Email is already in use");
+            }
+            email = sanitizedEmail;
+        }
         
-        user.avatar = avatarUrl;
+        if (bodyBio !== undefined) {
+            const sanitizedBio = sanitizeText(bodyBio, 500);
+            if (!validateLength(sanitizedBio, 0, 500)) {
+                res.status(400);
+                throw new Error("Bio must be less than 500 characters");
+            }
+            bio = sanitizedBio;
+        }
+
+        // Update text fields
+        user.name = name;
+        user.email = email;
+        user.bio = bio;
+        
+        // Update nested socialLinks object
+        if(req.body.socialLinks) {
+            try {
+                const socialLinks = typeof req.body.socialLinks === 'string' 
+                    ? JSON.parse(req.body.socialLinks) 
+                    : req.body.socialLinks;
+                
+                if (socialLinks && typeof socialLinks === 'object') {
+                    user.socialLinks.facebook = socialLinks.facebook || user.socialLinks.facebook || '';
+                    user.socialLinks.twitter = socialLinks.twitter || user.socialLinks.twitter || '';
+                    user.socialLinks.linkedin = socialLinks.linkedin || user.socialLinks.linkedin || '';
+                    user.socialLinks.youtube = socialLinks.youtube || user.socialLinks.youtube || '';
+                }
+            } catch (error) {
+                // If JSON parsing fails, ignore social links update
+                console.error('Error parsing socialLinks:', error);
+            }
+        }
+
+        // Update avatar if a new file is uploaded
+        if (req.file) {
+            try {
+                // If user already has an avatar, delete the old one from Cloudinary
+                if(user.avatar && user.avatar.includes('cloudinary')) {
+                    try {
+                        // Extract public_id from Cloudinary URL
+                        const urlParts = user.avatar.split('/');
+                        const publicIdIndex = urlParts.findIndex(part => part === 'avatars') + 1;
+                        if (publicIdIndex > 0 && urlParts[publicIdIndex]) {
+                            const publicId = urlParts[publicIdIndex].split('.')[0];
+                            await cloudinary.uploader.destroy(`lms/avatars/${publicId}`);
+                        }
+                    } catch (deleteError) {
+                        // Log but don't fail if deletion fails
+                        console.error('Error deleting old avatar:', deleteError);
+                    }
+                }
+                
+                // Cloudinary returns the URL in different properties depending on the version
+                // Try different possible properties
+                const avatarUrl = req.file.secure_url || req.file.url || req.file.path;
+                
+                if (avatarUrl) {
+                    user.avatar = avatarUrl;
+                }
+            } catch (avatarError) {
+                console.error('Error updating avatar:', avatarError);
+                // Don't throw - allow other profile updates to succeed even if avatar fails
+            }
+        }
+
+        const updatedUser = await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Profile updated successfully",
+            user: updatedUser,
+        });
+    } catch (error) {
+        console.error('Profile update error:', error);
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+        // Re-throw so asyncHandler can handle it
+        throw error;
     }
-
-    const updatedUser = await user.save();
-
-    res.status(200).json({
-        success: true,
-        message: "Profile updated successfully",
-        user: updatedUser,
-    });
 });
 
 /**
@@ -446,8 +513,6 @@ export const updateUserProfile = asyncHandler(async (req, res) => {
  * @access  Private
  */
 export const changePassword = asyncHandler(async (req, res) => {
-    // Import validation utilities
-    const { validatePassword, validateRequired } = await import('../utils/validation.js');
 
     const { currentPassword, newPassword } = req.body;
 

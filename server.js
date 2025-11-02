@@ -28,6 +28,7 @@ import productRoutes from './routes/product.routes.js';
 import cartRoutes from './routes/cart.routes.js';
 import digitalOrderRoutes from './routes/digitalOrder.routes.js';
 import projectInquiryRoutes from './routes/projectInquiry.routes.js';
+import blogRoutes from './routes/blog.routes.js';
 
 // Import Cloudinary configuration
 import './config/cloudinary.js';
@@ -58,6 +59,7 @@ app.use(validateRequestSize);
 
 // --- Middleware ---
 app.use(cors(corsOptions));
+// express.json() automatically skips multipart/form-data, so it's safe to use
 app.use(express.json({ limit: '10mb' })); // Limit request body size
 app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Limit URL-encoded body size
 app.use(cookieParser());
@@ -124,6 +126,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/dorders', digitalOrderRoutes);
 app.use('/api/project-inquiry', projectInquiryRoutes);
+app.use('/api/blogs', blogRoutes);
 
 // Simple health endpoint to verify DB and counts
 app.get('/api/health', async (req, res) => {

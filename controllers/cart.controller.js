@@ -1,6 +1,7 @@
 import asyncHandler from "express-async-handler";
 import Cart from "../models/cart.model.js";
 import Product from "../models/product.model.js";
+import { sanitizeNumber, validateObjectId } from '../utils/validation.js';
 
 function computeSubtotal(items) {
   return items.reduce((sum, it) => sum + it.price * it.quantity, 0);
@@ -14,8 +15,6 @@ export const getMyCart = asyncHandler(async (req, res) => {
 });
 
 export const addToCart = asyncHandler(async (req, res) => {
-  // Import validation utilities
-  const { sanitizeNumber, validateObjectId } = await import('../utils/validation.js');
 
   const userId = req.user._id;
   const productId = req.body.productId ? String(req.body.productId).trim() : '';
@@ -58,8 +57,6 @@ export const addToCart = asyncHandler(async (req, res) => {
 });
 
 export const updateCartItem = asyncHandler(async (req, res) => {
-  // Import validation utilities
-  const { sanitizeNumber, validateObjectId } = await import('../utils/validation.js');
 
   const userId = req.user._id;
   const productId = req.body.productId ? String(req.body.productId).trim() : '';
